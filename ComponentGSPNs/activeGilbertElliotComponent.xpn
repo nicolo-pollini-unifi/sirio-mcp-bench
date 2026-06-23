@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<tpn-editor>
+  <tpn-entities>
+    <place uuid="2e508173-2b08-4519-a11b-cbb5b38eaf0e" x="738" y="312">
+      <features/>
+      <properties>
+        <property id="0.default.name" name="failure" satellite-x="794" satellite-y="332"/>
+        <property id="default.marking" marking="0"/>
+      </properties>
+    </place>
+    <place uuid="c61b85fc-64a1-4c46-897a-5113f9c37805" x="393" y="330">
+      <features/>
+      <properties>
+        <property id="0.default.name" name="p0" satellite-x="371" satellite-y="352"/>
+        <property id="default.marking" marking="1"/>
+      </properties>
+    </place>
+    <transition rotation-angle="0.0" uuid="d3420f58-dae3-4178-9702-422956efbab5" x="548" y="414">
+      <features>
+        <feature id="transition.stochastic"/>
+      </features>
+      <properties>
+        <property id="0.default.name" name="t1" satellite-x="566" satellite-y="426"/>
+        <property enabling-function="" id="10.default.enablingFunction"/>
+        <property id="11.default.markingUpdate" marking-update=""/>
+        <property id="12.default.resetTransitions" reset-transitions=""/>
+        <property id="transition.stochastic" lambda="6" property-data-type="3.type.exponential" satellite-x="548" satellite-y="444"/>
+      </properties>
+    </transition>
+    <arc from="2e508173-2b08-4519-a11b-cbb5b38eaf0e" to="d3420f58-dae3-4178-9702-422956efbab5" uuid="61c3b455-8952-41c6-8a24-1371a6c723d8">
+      <features/>
+      <properties/>
+    </arc>
+    <arc from="d3420f58-dae3-4178-9702-422956efbab5" to="c61b85fc-64a1-4c46-897a-5113f9c37805" uuid="976b3f8e-570f-447f-b763-c3344f09c7ea">
+      <features/>
+      <properties/>
+    </arc>
+  </tpn-entities>
+</tpn-editor>
