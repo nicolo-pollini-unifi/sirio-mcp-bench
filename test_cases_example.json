@@ -1,0 +1,28 @@
+{
+  "seed": 42,
+  "cases": [
+    {
+      "id": "running_example_parsed",
+      "logicExpression": "(PWR1 & PWR2 & PWR3) | (WAN1 & WAN2) | (GSMR1 & GSMR2) | ( (CPU1 & CPU2 & CPU3) | (SFT1 & SFT2) ) | (BUS1 & BUS2)",
+      "maxTime": 100.0,
+      "timeStep": 1.0,
+      "error": 0.1,
+      "components": {
+        "PWR1": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/PWR_R.xpn" },
+        "PWR2": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/PWR_R.xpn" },
+        "PWR3": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/PWR_R.xpn" },
+        "WAN1": { "type": "gilbert-elliot", "failureRate": 0.009, "repairRate": 292.0, "xpnPath": "ComponentGSPNs/WAN_R.xpn" },
+        "WAN2": { "type": "gilbert-elliot", "failureRate": 0.009, "repairRate": 292.0, "xpnPath": "ComponentGSPNs/WAN_R.xpn" },
+        "GSMR1": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/GSMR_R.xpn" },
+        "GSMR2": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/GSMR_R.xpn" },
+        "CPU1": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/CPU_R.xpn" },
+        "CPU2": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/CPU_R.xpn" },
+        "CPU3": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/CPU_R.xpn" },
+        "SFT1": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/FPGA_R.xpn" },
+        "SFT2": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/FPGA_R.xpn" },
+        "BUS1": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/BUS_R.xpn" },
+        "BUS2": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/BUS_R.xpn" }
+      }
+    }
+  ]
+}
