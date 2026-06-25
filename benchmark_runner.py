@@ -15,7 +15,7 @@ from typing import Dict, Any, List, Tuple, Optional
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-from llm_client import GeminiDriver, OpenAICompatibleDriver, LLMDriver
+from llm_client import GeminiDriver, OpenAICompatibleDriver, LLMDriver, MockLLMDriver
 from mcp_dummy import SirioMCPMock, SIRIO_TOOL_SCHEMAS
 from metrics import compute_steady_state_error, compute_curve_metrics, is_solution_correct, compute_pass_at_k
 
@@ -184,6 +184,34 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mock_mcp: SirioMCPMock, prom
         
     raise TimeoutError("LLM exceeded max tool call iteration limit")
 
+def execute_agent_loop_mock(driver: LLMDriver, mock_mcp: SirioMCPMock, prompt: str, baseline: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
+    """
+    Simulates tool calls to the MCP mock and returns the baseline formatted in JSON.
+    """
+    # 1. create_petri_net
+    res = mock_mcp.handle_tool_call("create_petri_net", {})
+    net_id = res.get("net_id")
+    tool_calls_log = [{"tool": "create_petri_net", "args": {}}]
+    
+    if not net_id or "error" in res:
+        return f"Error: {res.get('error', 'Failed to create Petri net')}", tool_calls_log
+        
+    # 2. add_place
+    mock_mcp.handle_tool_call("add_place", {"net_id": net_id, "name": "P0", "tokens": 1})
+    tool_calls_log.append({"tool": "add_place", "args": {"net_id": net_id, "name": "P0", "tokens": 1}})
+    
+    # 3. add_transition
+    mock_mcp.handle_tool_call("add_transition", {"net_id": net_id, "name": "T0", "type": "exponential", "rate": 0.05})
+    tool_calls_log.append({"tool": "add_transition", "args": {"net_id": net_id, "name": "T0", "type": "exponential", "rate": 0.05}})
+    
+    # 4. run_steady_state_analysis
+    mock_mcp.handle_tool_call("run_steady_state_analysis", {"net_id": net_id, "failure_condition": "P0 == 0"})
+    tool_calls_log.append({"tool": "run_steady_state_analysis", "args": {"net_id": net_id, "failure_condition": "P0 == 0"}})
+    
+    # Return formatted baseline JSON
+    raw_text = f"```json\n{json.dumps(baseline, indent=2)}\n```"
+    return raw_text, tool_calls_log
+
 import requests # imported for the execute loops
 
 def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mock_mcp: SirioMCPMock, prompt: str) -> Tuple[str, List[Dict[str, Any]]]:
@@ -304,10 +332,15 @@ def run_evaluation_for_mode(
         error_msg = None
         
         try:
+            if isinstance(driver, MockLLMDriver):
+                driver.baseline_data = baseline
+                
             if with_mcp:
                 # With MCP loop
                 if provider == "gemini":
                     raw_text, tool_calls = execute_agent_loop_gemini(driver, mock_mcp, prompt)
+                elif provider == "mock":
+                    raw_text, tool_calls = execute_agent_loop_mock(driver, mock_mcp, prompt, baseline)
                 else:
                     raw_text, tool_calls = execute_agent_loop_openai(driver, mock_mcp, prompt)
             else:
@@ -397,7 +430,7 @@ def main():
     parser.add_argument("--config", default="test_cases_example.json", help="Path to input test cases configuration JSON")
     parser.add_argument("--api-key", default=None, help="Gemini API Key (Google AI Studio)")
     parser.add_argument("--model", default="gemini-2.5-flash", help="Gemini model name")
-    parser.add_argument("--provider", default="gemini", choices=["gemini", "openai"], help="Model provider endpoint")
+    parser.add_argument("--provider", default="gemini", choices=["gemini", "openai", "mock"], help="Model provider endpoint")
     parser.add_argument("--openai-url", default="http://localhost:8000/v1", help="OpenAI-compatible endpoint url")
     parser.add_argument("--openai-model", default="qwen-2.5-coder-32b", help="Model name for OpenAI endpoint")
     parser.add_argument("--openai-key", default="local", help="OpenAI API Key (defaults to 'local')")
@@ -420,6 +453,8 @@ def main():
             logger.error("Missing Gemini API Key. Use --api-key or GEMINI_API_KEY env var.")
             sys.exit(1)
         driver = GeminiDriver(api_key=args.api_key, model_name=args.model)
+    elif args.provider == "mock":
+        driver = MockLLMDriver()
     else:
         driver = OpenAICompatibleDriver(base_url=args.openai_url, model_name=args.openai_model, api_key=args.openai_key)
         
@@ -550,16 +585,14 @@ def main():
         })
         
     # Write summary report
-    write_markdown_report(report_data, output_dir, args.samples, args.k)
+    write_markdown_report(driver, report_data, output_dir, args.samples, args.k)
 
-def write_markdown_report(data: List[Dict[str, Any]], output_dir: str, samples: int, k: int):
+def write_local_report_fallback(data: List[Dict[str, Any]], report_path: str, samples: int, k: int):
     """
-    Generates a formal, technical evaluation report summarizing the benchmark findings.
+    Programmatically writes a structured report to report_path as a fallback or dry-run placeholder.
     """
-    report_path = os.path.join(output_dir, "benchmark_report.md")
-    
     with open(report_path, "w", encoding="utf-8") as f:
-        f.write("# Quantitative Benchmark Report: LLM vs LLM+MCP on Fault Tree Unreliability\n\n")
+        f.write("# Quantitative Benchmark Report: LLM vs LLM+MCP on Fault Tree Unreliability (Deterministic Report)\n\n")
         f.write("## 1. Executive Summary\n")
         f.write(
             "This report documents the comparative performance evaluation of a Large Language Model (LLM) "
@@ -574,19 +607,14 @@ def write_markdown_report(data: List[Dict[str, Any]], output_dir: str, samples: 
         f.write("- **Tool Availability for LLM+MCP**: Low-level Petri Net primitives (places, transitions, markings, analysis executions) without Fault Tree modeling abstraction.\n\n")
         
         f.write("## 3. Comparative Performance Metrics\n\n")
-        
-        # Global metrics table
         f.write("| Case ID | Config | Steady-State Prob | SS Abs Error | Curve MAE | Curve RMSE | Executable Rate | Pass@k |\n")
         f.write("| --- | --- | --- | --- | --- | --- | --- | --- |\n")
         
         for case in data:
             cid = case["case_id"]
             base_ss = case["baseline"]["steadyState"]
-            
-            # Baseline row
             f.write(f"| {cid} | Baseline | {base_ss:.8f} | 0.00000000 | 0.00000000 | 0.00000000 | 100.0% | N/A |\n")
             
-            # LLM no mcp row
             nm = case["no_mcp"]
             ss_str = f"{nm['steady_state']:.8f}" if not np.isnan(nm['steady_state']) else "N/A"
             se_str = f"{nm['steady_error']:.8f}" if not np.isnan(nm['steady_error']) else "N/A"
@@ -594,7 +622,6 @@ def write_markdown_report(data: List[Dict[str, Any]], output_dir: str, samples: 
             rmse_str = f"{nm['rmse']:.8f}" if not np.isnan(nm['rmse']) else "N/A"
             f.write(f"| | LLM (No MCP) | {ss_str} | {se_str} | {mae_str} | {rmse_str} | {nm['executable_rate']:.1%} | {nm['pass_k']:.1%} |\n")
             
-            # LLM with mcp row
             m = case["mcp"]
             m_ss_str = f"{m['steady_state']:.8f}" if not np.isnan(m['steady_state']) else "N/A"
             m_se_str = f"{m['steady_error']:.8f}" if not np.isnan(m['steady_error']) else "N/A"
@@ -603,7 +630,6 @@ def write_markdown_report(data: List[Dict[str, Any]], output_dir: str, samples: 
             f.write(f"| | LLM+MCP | {m_ss_str} | {m_se_str} | {m_mae_str} | {m_rmse_str} | {m['executable_rate']:.1%} | {m['pass_k']:.1%} |\n")
             
         f.write("\n\n## 4. Evaluation and Transient Curves\n\n")
-        
         for case in data:
             cid = case["case_id"]
             f.write(f"### Case: {cid}\n\n")
@@ -617,8 +643,86 @@ def write_markdown_report(data: List[Dict[str, Any]], output_dir: str, samples: 
             "- **LLM Direct Prompt Behavior**: When denied tool access, the LLM either uses textbook formula approximations or "
             "hallucinates mathematical probability calculations, leading to higher curve MAE/RMSE.\n"
         )
+
+def write_markdown_report(driver: LLMDriver, data: List[Dict[str, Any]], output_dir: str, samples: int, k: int):
+    """
+    Generates a formal, technical evaluation report summarizing the benchmark findings
+    by calling the LLM to write the report dynamically based on the results.
+    """
+    report_path = os.path.join(output_dir, "benchmark_report.md")
+    
+    # Use deterministic fallback for mock runs to prevent API calls and maintain reproducibility
+    if isinstance(driver, MockLLMDriver):
+        logger.info("Using deterministic fallback report writer for dry-run/mock mode.")
+        write_local_report_fallback(data, report_path, samples, k)
+        logger.info(f"Benchmark report generated successfully (dry-run mode) at: {report_path}")
+        return
+
+    # Prompt schema designed to instruct the LLM to write a technical discussion around metrics
+    prompt = f"""You are a reliability engineering and academic writing expert. Your task is to write a formal, technical evaluation report summarizing the findings of a benchmarking experiment.
+
+The experiment compared:
+1. Baseline (Ground Truth): Petri Net formal execution via the SIRIO library (Java).
+2. LLM without MCP: Direct prompting of the model.
+3. LLM+MCP: The model with low-level Petri Net tool access (places, transitions, markings, analysis executions).
+
+Here is the structured data collected from the experiment:
+{json.dumps(data, indent=2)}
+
+Parameters:
+- Samples per case: {samples}
+- Pass@k (k): {k}
+
+Please generate the report in raw Markdown. Follow this structure strictly:
+
+# Quantitative Benchmark Report: LLM vs LLM+MCP on Fault Tree Unreliability
+
+## 1. Executive Summary
+[Summarize the goal of comparing LLM vs LLM+MCP on quantitative fault tree analysis, the findings, and the main conclusions.]
+
+## 2. Experimental Setup
+[Detail the methodology, model used, baseline solver (SIRIO), and the tools made available to LLM+MCP (low-level Petri net building blocks without higher-level fault tree concepts).]
+
+## 3. Comparative Performance Metrics
+[Provide a markdown table summarizing the performance metrics. You MUST build the table based on the provided JSON data. Include columns for Case ID, Config, Steady-State Prob, SS Abs Error, Curve MAE, Curve RMSE, Executable Rate, and Pass@k.]
+
+## 4. Evaluation and Transient Curves
+[For each case, include a sub-section with the comparison plot. Example format:
+### Case: <case_id>
+![Transient Curve comparison](<plot_relative_path>)
+Add some brief observations on the curve alignments.]
+
+## 5. Architectural Findings & Discussion
+[Provide a detailed and rigorous technical analysis. Discuss:
+- The challenge of translating a Fault Tree logic expression into low-level Petri Net components (places, transitions, enabling functions).
+- Why the LLM+MCP configuration might fail or succeed depending on the model's capability to structure state spaces.
+- Why the LLM without MCP is prone to mathematical approximations or hallucinations, leading to higher transient curve errors.
+- Recommendations for future MCP tool designs (e.g., higher-level fault tree gates vs low-level Petri net primitives).]
+
+Do not wrap the output in markdown code blocks (e.g. do not start with ```markdown and do not end with ```). Return only the raw markdown content itself.
+"""
+
+    logger.info("Invoking LLM to generate formal benchmark report...")
+    try:
+        report_content = driver.generate(prompt, "You are a technical report writing assistant. You must produce output in raw Markdown format.")
         
-    logger.info(f"Benchmark report generated successfully at: {report_path}")
+        # Strip code block wrapping if model generated it anyway
+        if report_content.startswith("```markdown"):
+            report_content = report_content.split("```markdown", 1)[1]
+        elif report_content.startswith("```"):
+            report_content = report_content.split("```", 1)[1]
+        if report_content.endswith("```"):
+            report_content = report_content.rsplit("```", 1)[0]
+        report_content = report_content.strip()
+
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(report_content)
+        logger.info(f"Dynamic LLM benchmark report generated successfully at: {report_path}")
+    except Exception as e:
+        logger.error(f"Failed to generate benchmark report via LLM: {e}")
+        logger.warning("Falling back to local report generation due to LLM error.")
+        write_local_report_fallback(data, report_path, samples, k)
+        logger.info(f"Fallback benchmark report generated successfully at: {report_path}")
 
 if __name__ == "__main__":
     main()
