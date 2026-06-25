@@ -43,3 +43,6 @@ output/
 ### Python
 __pycache__/
 *.pyc
+
+### Java dependencies
+classpath.txt
