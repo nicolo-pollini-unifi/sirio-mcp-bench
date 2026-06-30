@@ -10,7 +10,19 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mcp_client import SirioMCPRealClient
 
 def main():
-    client = SirioMCPRealClient(mode="sse", sse_url="http://localhost:8081/sse")
+    # Resolve workspace root (parent of python_runner/)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    workspace_path = os.path.dirname(os.path.dirname(script_dir))
+    
+    # Read classpath
+    classpath_file = os.path.join(workspace_path, "classpath.txt")
+    with open(classpath_file, 'r', encoding='utf-8') as f:
+        maven_deps = f.read().strip()
+    target_classes = os.path.join(workspace_path, "target", "classes")
+    sirio_jar = os.path.join(workspace_path, "lib", "sirio-2.0.4.jar")
+    classpath = ";".join([target_classes, sirio_jar, maven_deps])
+
+    client = SirioMCPRealClient(mode="sse", sse_url="http://localhost:8081/sse", classpath=classpath)
     print("Starting client...")
     client.start()
     

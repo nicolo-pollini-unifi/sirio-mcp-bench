@@ -331,6 +331,7 @@ class SirioMCPRealClient(BaseMCPClient):
         self.loop = asyncio.new_event_loop()
         self.exit_stack: Optional[AsyncExitStack] = None
         self.session: Optional[Any] = None
+        self.sse_process = None
 
     def start(self) -> None:
         logger.info(f"Starting SirioMCPRealClient in '{self.mode}' mode...")
@@ -362,6 +363,24 @@ class SirioMCPRealClient(BaseMCPClient):
                 read_stream, write_stream = await self.exit_stack.enter_async_context(stdio_client(server_params))
             elif self.mode == "sse":
                 from mcp.client.sse import sse_client
+                if self.classpath:
+                    import subprocess
+                    port = "8081"
+                    if "localhost:" in self.sse_url:
+                        parts = self.sse_url.split("localhost:")
+                        if len(parts) > 1:
+                            port = parts[1].split("/")[0]
+                    args = [
+                        "java",
+                        "-cp", self.classpath,
+                        "org.swam.sirio_mcp_server.SirioMcpServerApplication",
+                        "--spring.main.web-application-type=servlet",
+                        "--spring.ai.mcp.server.stdio=false",
+                        f"--server.port={port}"
+                    ]
+                    logger.info(f"Launching SSE Java server in background on port {port}...")
+                    self.sse_process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    await asyncio.sleep(4.0)
                 logger.info(f"Connecting to SSE server at: {self.sse_url}")
                 read_stream, write_stream = await self.exit_stack.enter_async_context(sse_client(url=self.sse_url))
             else:
@@ -433,3 +452,13 @@ class SirioMCPRealClient(BaseMCPClient):
             self.loop.close()
         except Exception:
             pass
+        if hasattr(self, 'sse_process') and self.sse_process:
+            logger.info("Terminating SSE background Java server subprocess.")
+            try:
+                self.sse_process.terminate()
+                self.sse_process.wait(timeout=2)
+            except Exception:
+                try:
+                    self.sse_process.kill()
+                except Exception:
+                    pass
