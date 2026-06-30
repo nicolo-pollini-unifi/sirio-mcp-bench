@@ -1,18 +1,18 @@
 package org.util;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import org.faultTree.ComponentNode;
 import org.faultTree.GSPN;
+import org.oristool.models.stpn.trees.StochasticTransitionFeature;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.*;
 
 public class TestCaseGenerator {
 
-    enum TestTier {
+    public enum TestTier {
         LOW,
         MEDIUM,
         HIGH
@@ -56,7 +56,8 @@ public class TestCaseGenerator {
     private static final String FAILURE_CONDITION = "failure > 0";
 
     private final Map<String, GSPN> gspnCache = new HashMap<>();
-    private final Random random = new Random();
+    private final long seed = 30062026;
+    private final Random random = new Random(seed);
 
     // Contatori separati per prefisso
     private final Map<String, Integer> prefixCounters = new HashMap<>();
@@ -225,9 +226,60 @@ public class TestCaseGenerator {
         return new TestCase(logicExpression, dictionary, tier);
     }
 
+    public void convertTestCasesToJSON(List<TestCase> testCases, String filePath) throws IOException {
+        // Definition of used records
+        record Component (
+           String type,
+           float failureRate,
+           float repairRate,
+           String xpnPath
+        ) {}
+
+        record Case (
+            String id,
+            String logicExpression,
+            float maxTime,
+            float timeStep,
+            float error,
+            Map<String, Component> components
+        ) {}
+
+        record Document (
+            long seed,
+            List<Case> cases
+        ) {}
+
+        List<Case> cases = new LinkedList<>();
+        for (TestCase tCase : testCases) {
+            Map<String, Component> cMap = new HashMap<>();
+            for (String name : tCase.dictionary.keySet()) {
+                var node = tCase.dictionary.get(name);
+                var nodePetriNet = node.getComponentGSPN().getPetriNet();
+                float failureRate = nodePetriNet.getTransition("fail").getFeature(StochasticTransitionFeature.class).density().getDensities().get(0).getExponentialRate().floatValue();
+                float repairRate = nodePetriNet.getTransition("repair").getFeature(StochasticTransitionFeature.class).density().getDensities().get(0).getExponentialRate().floatValue();
+                String xpnPath = COMPONENT_FILES.get(name.replaceAll("\\d", ""));
+                Component c = new Component("gilbert-elliot", failureRate, repairRate, xpnPath);
+
+                cMap.put(name, c);
+            }
+            Case tc = new Case("TestCaseGenerator", tCase.logicExpression, 100.0f, 1.0f, 0.1f, cMap);
+            cases.add(tc);
+        }
+        Document d = new Document(this.seed, cases);
+
+        Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
+        try (FileWriter fw = new FileWriter(filePath + "\\generated_test_cases.json")){
+            gson.toJson(d, fw);
+            fw.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
     public static void testGeneration() {
         try {
             TestCaseGenerator generator = new TestCaseGenerator();
+            List<TestCase> testCases = new LinkedList<>();
 
             System.out.println("Generating random test cases...");
             System.out.println("=========================================");
@@ -237,6 +289,7 @@ public class TestCaseGenerator {
 
                 TestTier randTier = TestTier.values()[generator.random.nextInt(TestTier.values().length)];
                 TestCase testCase = generator.generateRandomTestCase(randTier);
+                testCases.add(testCase);
 
                 System.out.println("Generated Test Case:");
                 System.out.println(" - Tier: " + testCase.getTier());
@@ -251,6 +304,7 @@ public class TestCaseGenerator {
 
                 System.out.println("\n-----------------------------------------");
             }
+            generator.convertTestCasesToJSON(testCases, System.getProperty("user.dir"));
 
         } catch (Exception e) {
             e.printStackTrace();
