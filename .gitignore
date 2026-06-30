@@ -34,10 +34,14 @@ build/
 ### VS Code ###
 .vscode/
 
+### Antigravity ###
+.antigravity/
+artifacts/
+
 ### Mac OS ###
 .DS_Store
 
-### Tests
+### Tests ###
 output/
 
 ### Python
