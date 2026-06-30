@@ -16,7 +16,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 from llm_client import GeminiDriver, OpenAICompatibleDriver, LLMDriver, MockLLMDriver
-from mcp_dummy import SirioMCPMock, SIRIO_TOOL_SCHEMAS
+from mcp_client import BaseMCPClient, SirioMCPMock, SirioMCPRealClient
 from metrics import compute_steady_state_error, compute_curve_metrics, is_solution_correct, compute_pass_at_k
 
 SYSTEM_INSTRUCTION = (
@@ -100,15 +100,16 @@ def run_java_baseline(workspace_path: str, case_json_path: str, case_id: str) ->
         except OSError:
             pass
 
-def execute_agent_loop_gemini(driver: GeminiDriver, mock_mcp: SirioMCPMock, prompt: str) -> Tuple[str, List[Dict[str, Any]]]:
+def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, prompt: str) -> Tuple[str, List[Dict[str, Any]]]:
     """
-    Executes the Gemini API conversation loop, routing tool calls to the Dummy MCP.
+    Executes the Gemini API conversation loop, routing tool calls to the MCP client.
     """
     headers = {"Content-Type": "application/json"}
     
-    # Convert schemas to Gemini declarations format
+    # Convert schemas to Gemini declarations format dynamically
     declarations = []
-    for tool in SIRIO_TOOL_SCHEMAS:
+    mcp_tools = mcp_client.list_tools()
+    for tool in mcp_tools:
         func = tool["function"]
         declarations.append({
             "name": func["name"],
@@ -147,7 +148,6 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mock_mcp: SirioMCPMock, prom
         
         # Check if model requested a tool call
         function_calls = [p.get("functionCall") for p in parts if "functionCall" in p]
-        
         if not function_calls:
             # Model returned final answer
             text = "".join([p.get("text", "") for p in parts if "text" in p])
@@ -167,7 +167,7 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mock_mcp: SirioMCPMock, prom
             
             tool_calls_log.append({"tool": name, "args": args})
             
-            result = mock_mcp.handle_tool_call(name, args)
+            result = mcp_client.handle_tool_call(name, args)
             
             response_parts.append({
                 "functionResponse": {
@@ -184,12 +184,12 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mock_mcp: SirioMCPMock, prom
         
     raise TimeoutError("LLM exceeded max tool call iteration limit")
 
-def execute_agent_loop_mock(driver: LLMDriver, mock_mcp: SirioMCPMock, prompt: str, baseline: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
+def execute_agent_loop_mock(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str, baseline: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
     """
     Simulates tool calls to the MCP mock and returns the baseline formatted in JSON.
     """
     # 1. create_petri_net
-    res = mock_mcp.handle_tool_call("create_petri_net", {})
+    res = mcp_client.handle_tool_call("create_petri_net", {})
     net_id = res.get("net_id")
     tool_calls_log = [{"tool": "create_petri_net", "args": {}}]
     
@@ -197,15 +197,15 @@ def execute_agent_loop_mock(driver: LLMDriver, mock_mcp: SirioMCPMock, prompt: s
         return f"Error: {res.get('error', 'Failed to create Petri net')}", tool_calls_log
         
     # 2. add_place
-    mock_mcp.handle_tool_call("add_place", {"net_id": net_id, "name": "P0", "tokens": 1})
+    mcp_client.handle_tool_call("add_place", {"net_id": net_id, "name": "P0", "tokens": 1})
     tool_calls_log.append({"tool": "add_place", "args": {"net_id": net_id, "name": "P0", "tokens": 1}})
     
     # 3. add_transition
-    mock_mcp.handle_tool_call("add_transition", {"net_id": net_id, "name": "T0", "type": "exponential", "rate": 0.05})
+    mcp_client.handle_tool_call("add_transition", {"net_id": net_id, "name": "T0", "type": "exponential", "rate": 0.05})
     tool_calls_log.append({"tool": "add_transition", "args": {"net_id": net_id, "name": "T0", "type": "exponential", "rate": 0.05}})
     
     # 4. run_steady_state_analysis
-    mock_mcp.handle_tool_call("run_steady_state_analysis", {"net_id": net_id, "failure_condition": "P0 == 0"})
+    mcp_client.handle_tool_call("run_steady_state_analysis", {"net_id": net_id, "failure_condition": "P0 == 0"})
     tool_calls_log.append({"tool": "run_steady_state_analysis", "args": {"net_id": net_id, "failure_condition": "P0 == 0"}})
     
     # Return formatted baseline JSON
@@ -214,9 +214,9 @@ def execute_agent_loop_mock(driver: LLMDriver, mock_mcp: SirioMCPMock, prompt: s
 
 import requests # imported for the execute loops
 
-def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mock_mcp: SirioMCPMock, prompt: str) -> Tuple[str, List[Dict[str, Any]]]:
+def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mcp_client: BaseMCPClient, prompt: str) -> Tuple[str, List[Dict[str, Any]]]:
     """
-    Executes the OpenAI-compatible local API loop, routing tool calls to the Dummy MCP.
+    Executes the OpenAI-compatible local API loop, routing tool calls to the MCP server.
     """
     headers = {
         "Content-Type": "application/json",
@@ -229,11 +229,13 @@ def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mock_mcp: SirioMCP
     ]
     tool_calls_log = []
     
+    mcp_tools = mcp_client.list_tools()
+    
     for _ in range(30):
         payload = {
             "model": driver.model_name,
             "messages": messages,
-            "tools": SIRIO_TOOL_SCHEMAS,
+            "tools": mcp_tools,
             "temperature": 0.0,
             "max_tokens": 4096
         }
@@ -267,7 +269,7 @@ def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mock_mcp: SirioMCP
                 
             tool_calls_log.append({"tool": name, "args": args})
             
-            result = mock_mcp.handle_tool_call(name, args)
+            result = mcp_client.handle_tool_call(name, args)
             
             messages.append({
                 "role": "tool",
@@ -306,7 +308,7 @@ def parse_json_from_response(text: str) -> Optional[Dict[str, Any]]:
 
 def run_evaluation_for_mode(
     driver: LLMDriver,
-    mock_mcp: SirioMCPMock,
+    mcp_client: BaseMCPClient,
     prompt: str,
     baseline: Dict[str, Any],
     with_mcp: bool,
@@ -338,11 +340,11 @@ def run_evaluation_for_mode(
             if with_mcp:
                 # With MCP loop
                 if provider == "gemini":
-                    raw_text, tool_calls = execute_agent_loop_gemini(driver, mock_mcp, prompt)
+                    raw_text, tool_calls = execute_agent_loop_gemini(driver, mcp_client, prompt)
                 elif provider == "mock":
-                    raw_text, tool_calls = execute_agent_loop_mock(driver, mock_mcp, prompt, baseline)
+                    raw_text, tool_calls = execute_agent_loop_mock(driver, mcp_client, prompt, baseline)
                 else:
-                    raw_text, tool_calls = execute_agent_loop_openai(driver, mock_mcp, prompt)
+                    raw_text, tool_calls = execute_agent_loop_openai(driver, mcp_client, prompt)
             else:
                 # Without MCP direct prompt
                 raw_text = driver.generate(prompt, SYSTEM_INSTRUCTION)
@@ -437,10 +439,12 @@ def main():
     parser.add_argument("--samples", type=int, default=1, help="Number of sampling generation passes per case")
     parser.add_argument("--k", type=int, default=1, help="k value for Pass@k estimation")
     parser.add_argument("--output-dir", default="output/benchmark", help="Output directory for plots and reports")
+    parser.add_argument("--mcp-mode", default="mock", choices=["mock", "stdio", "sse"], help="MCP server connection mode")
+    parser.add_argument("--sse-url", default="http://localhost:8081/mcp/sse", help="MCP server SSE URL (when mcp-mode is sse)")
     
     args = parser.parse_args()
     
-    workspace_path = os.path.dirname(os.path.abspath(__file__))
+    workspace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_dir = os.path.abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
     
@@ -458,134 +462,161 @@ def main():
     else:
         driver = OpenAICompatibleDriver(base_url=args.openai_url, model_name=args.openai_model, api_key=args.openai_key)
         
-    mock_mcp = SirioMCPMock(workspace_path)
-    
-    # Load cases
-    config_path = os.path.abspath(args.config)
-    if not os.path.exists(config_path):
-        logger.error(f"Configuration file {config_path} does not exist.")
-        sys.exit(1)
-        
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config_data = json.load(f)
-        
-    cases = config_data.get("cases", [])
-    if not cases:
-        # Fallback if config is single testcase
-        cases = [config_data]
-        
-    logger.info(f"Loaded {len(cases)} test cases from config.")
-    
-    report_data = []
-    
-    for case in cases:
-        case_id = case["id"]
-        logger.info(f"========== Starting Benchmark for Case: {case_id} ==========")
-        
-        # 1. Run Java Baseline (Ground Truth)
-        try:
-            baseline = run_java_baseline(workspace_path, config_path, case_id)
-        except Exception as e:
-            logger.error(f"Failed to run Java baseline for case {case_id}: {e}")
-            traceback.print_exc()
-            continue
+    # Build classpath for stdio real client
+    classpath = ""
+    if args.mcp_mode == "stdio":
+        classpath_file = os.path.join(workspace_path, "classpath.txt")
+        maven_deps = ""
+        if os.path.exists(classpath_file):
+            try:
+                with open(classpath_file, 'r', encoding='utf-8') as f:
+                    maven_deps = f.read().strip()
+            except Exception as e:
+                logger.warning(f"Could not read classpath.txt: {e}")
+        target_classes = os.path.join(workspace_path, "target", "classes")
+        target_test_classes = os.path.join(workspace_path, "target", "test-classes")
+        sirio_jar = os.path.join(workspace_path, "lib", "sirio-2.0.4.jar")
+        separator = ";" if sys.platform.startswith("win") else ":"
+        cp_elements = [target_classes, target_test_classes, sirio_jar]
+        if maven_deps:
+            cp_elements.append(maven_deps)
+        classpath = separator.join(cp_elements)
+
+    if args.mcp_mode == "mock":
+        mcp_client = SirioMCPMock(workspace_path)
+    else:
+        mcp_client = SirioMCPRealClient(mode=args.mcp_mode, classpath=classpath, sse_url=args.sse_url)
+
+    mcp_client.start()
+    try:
+        # Load cases
+        config_path = os.path.abspath(args.config)
+        if not os.path.exists(config_path):
+            logger.error(f"Configuration file {config_path} does not exist.")
+            sys.exit(1)
             
-        # 2. Build prompt
-        comp_details = build_components_details(case["components"])
-        prompt = USER_PROMPT_TEMPLATE.format(
-            logic_expression=case["logicExpression"],
-            time_step=case["timeStep"],
-            max_time=case["maxTime"],
-            error=case["error"],
-            components_details=comp_details
-        )
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config_data = json.load(f)
+            
+        cases = config_data.get("cases", [])
+        if not cases:
+            # Fallback if config is single testcase
+            cases = [config_data]
+            
+        logger.info(f"Loaded {len(cases)} test cases from config.")
         
-        # 3. LLM Run without MCP
-        logger.info(f"Running LLM without MCP (Mode: direct prompt)...")
-        no_mcp_runs, no_mcp_exec_rate, no_mcp_correct_count = run_evaluation_for_mode(
-            driver=driver,
-            mock_mcp=mock_mcp,
-            prompt=prompt,
-            baseline=baseline,
-            with_mcp=False,
-            provider=args.provider,
-            num_samples=args.samples
-        )
-        no_mcp_pass_k = compute_pass_at_k(args.samples, no_mcp_correct_count, args.k)
+        report_data = []
         
-        # Get first successful run's data for plotting
-        first_no_mcp_success = next((run for run in no_mcp_runs if run["success"]), None)
-        no_mcp_steady = first_no_mcp_success["steady_state"] if first_no_mcp_success else float('nan')
-        no_mcp_curve = first_no_mcp_success["transient_result"] if first_no_mcp_success else None
-        
-        # Compute errors for reporting
-        no_mcp_steady_err = compute_steady_state_error(baseline["steadyState"], no_mcp_steady) if first_no_mcp_success else float('nan')
-        no_mcp_mae, no_mcp_rmse = compute_curve_metrics(baseline["transientResult"], no_mcp_curve) if first_no_mcp_success else (float('nan'), float('nan'))
-        
-        # 4. LLM Run with MCP
-        logger.info(f"Running LLM with MCP (Mode: tool calling enabled)...")
-        mcp_runs, mcp_exec_rate, mcp_correct_count = run_evaluation_for_mode(
-            driver=driver,
-            mock_mcp=mock_mcp,
-            prompt=prompt,
-            baseline=baseline,
-            with_mcp=True,
-            provider=args.provider,
-            num_samples=args.samples
-        )
-        mcp_pass_k = compute_pass_at_k(args.samples, mcp_correct_count, args.k)
-        
-        first_mcp_success = next((run for run in mcp_runs if run["success"]), None)
-        mcp_steady = first_mcp_success["steady_state"] if first_mcp_success else float('nan')
-        mcp_curve = first_mcp_success["transient_result"] if first_mcp_success else None
-        
-        mcp_steady_err = compute_steady_state_error(baseline["steadyState"], mcp_steady) if first_mcp_success else float('nan')
-        mcp_mae, mcp_rmse = compute_curve_metrics(baseline["transientResult"], mcp_curve) if first_mcp_success else (float('nan'), float('nan'))
-        
-        # 5. Generate comparative plot
-        plot_filename = f"{case_id}_curve_comparison.png"
-        plot_path = os.path.join(output_dir, plot_filename)
-        generate_comparative_plots(
-            case_id=case_id,
-            baseline_curve=baseline["transientResult"],
-            llm_no_mcp_curve=no_mcp_curve,
-            llm_mcp_curve=mcp_curve,
-            output_path=plot_path
-        )
-        
-        # Log case summaries
-        logger.info(f"Case {case_id} steady state: Baseline={baseline['steadyState']:.6f}, No-MCP={no_mcp_steady:.6f}, MCP={mcp_steady:.6f}")
-        logger.info(f"MAE: No-MCP={no_mcp_mae:.6f}, MCP={mcp_mae:.6f}")
-        logger.info(f"Pass@{args.k}: No-MCP={no_mcp_pass_k:.2%}, MCP={mcp_pass_k:.2%}")
-        
-        report_data.append({
-            "case_id": case_id,
-            "baseline": baseline,
-            "no_mcp": {
-                "steady_state": no_mcp_steady,
-                "steady_error": no_mcp_steady_err,
-                "mae": no_mcp_mae,
-                "rmse": no_mcp_rmse,
-                "executable_rate": no_mcp_exec_rate,
-                "pass_k": no_mcp_pass_k,
-                "avg_latency": np.mean([r["latency_seconds"] for r in no_mcp_runs])
-            },
-            "mcp": {
-                "steady_state": mcp_steady,
-                "steady_error": mcp_steady_err,
-                "mae": mcp_mae,
-                "rmse": mcp_rmse,
-                "executable_rate": mcp_exec_rate,
-                "pass_k": mcp_pass_k,
-                "avg_latency": np.mean([r["latency_seconds"] for r in mcp_runs]),
-                "tool_calls_count": np.mean([len(r["tool_calls"]) for r in mcp_runs])
-            },
-            "plot_path": plot_path,
-            "plot_relative": plot_filename
-        })
-        
-    # Write summary report
-    write_markdown_report(driver, report_data, output_dir, args.samples, args.k)
+        for case in cases:
+            case_id = case["id"]
+            logger.info(f"========== Starting Benchmark for Case: {case_id} ==========")
+            
+            # 1. Run Java Baseline (Ground Truth)
+            try:
+                baseline = run_java_baseline(workspace_path, config_path, case_id)
+            except Exception as e:
+                logger.error(f"Failed to run Java baseline for case {case_id}: {e}")
+                traceback.print_exc()
+                continue
+                
+            # 2. Build prompt
+            comp_details = build_components_details(case["components"])
+            prompt = USER_PROMPT_TEMPLATE.format(
+                logic_expression=case["logicExpression"],
+                time_step=case["timeStep"],
+                max_time=case["maxTime"],
+                error=case["error"],
+                components_details=comp_details
+            )
+            
+            # 3. LLM Run without MCP
+            logger.info(f"Running LLM without MCP (Mode: direct prompt)...")
+            no_mcp_runs, no_mcp_exec_rate, no_mcp_correct_count = run_evaluation_for_mode(
+                driver=driver,
+                mcp_client=mcp_client,
+                prompt=prompt,
+                baseline=baseline,
+                with_mcp=False,
+                provider=args.provider,
+                num_samples=args.samples
+            )
+            no_mcp_pass_k = compute_pass_at_k(args.samples, no_mcp_correct_count, args.k)
+            
+            # Get first successful run's data for plotting
+            first_no_mcp_success = next((run for run in no_mcp_runs if run["success"]), None)
+            no_mcp_steady = first_no_mcp_success["steady_state"] if first_no_mcp_success else float('nan')
+            no_mcp_curve = first_no_mcp_success["transient_result"] if first_no_mcp_success else None
+            
+            # Compute errors for reporting
+            no_mcp_steady_err = compute_steady_state_error(baseline["steadyState"], no_mcp_steady) if first_no_mcp_success else float('nan')
+            no_mcp_mae, no_mcp_rmse = compute_curve_metrics(baseline["transientResult"], no_mcp_curve) if first_no_mcp_success else (float('nan'), float('nan'))
+            
+            # 4. LLM Run with MCP
+            logger.info(f"Running LLM with MCP (Mode: tool calling enabled)...")
+            mcp_runs, mcp_exec_rate, mcp_correct_count = run_evaluation_for_mode(
+                driver=driver,
+                mcp_client=mcp_client,
+                prompt=prompt,
+                baseline=baseline,
+                with_mcp=True,
+                provider=args.provider,
+                num_samples=args.samples
+            )
+            mcp_pass_k = compute_pass_at_k(args.samples, mcp_correct_count, args.k)
+            
+            first_mcp_success = next((run for run in mcp_runs if run["success"]), None)
+            mcp_steady = first_mcp_success["steady_state"] if first_mcp_success else float('nan')
+            mcp_curve = first_mcp_success["transient_result"] if first_mcp_success else None
+            
+            mcp_steady_err = compute_steady_state_error(baseline["steadyState"], mcp_steady) if first_mcp_success else float('nan')
+            mcp_mae, mcp_rmse = compute_curve_metrics(baseline["transientResult"], mcp_curve) if first_mcp_success else (float('nan'), float('nan'))
+            
+            # 5. Generate comparative plot
+            plot_filename = f"{case_id}_curve_comparison.png"
+            plot_path = os.path.join(output_dir, plot_filename)
+            generate_comparative_plots(
+                case_id=case_id,
+                baseline_curve=baseline["transientResult"],
+                llm_no_mcp_curve=no_mcp_curve,
+                llm_mcp_curve=mcp_curve,
+                output_path=plot_path
+            )
+            
+            # Log case summaries
+            logger.info(f"Case {case_id} steady state: Baseline={baseline['steadyState']:.6f}, No-MCP={no_mcp_steady:.6f}, MCP={mcp_steady:.6f}")
+            logger.info(f"MAE: No-MCP={no_mcp_mae:.6f}, MCP={mcp_mae:.6f}")
+            logger.info(f"Pass@{args.k}: No-MCP={no_mcp_pass_k:.2%}, MCP={mcp_pass_k:.2%}")
+            
+            report_data.append({
+                "case_id": case_id,
+                "baseline": baseline,
+                "no_mcp": {
+                    "steady_state": no_mcp_steady,
+                    "steady_error": no_mcp_steady_err,
+                    "mae": no_mcp_mae,
+                    "rmse": no_mcp_rmse,
+                    "executable_rate": no_mcp_exec_rate,
+                    "pass_k": no_mcp_pass_k,
+                    "avg_latency": np.mean([r["latency_seconds"] for r in no_mcp_runs])
+                },
+                "mcp": {
+                    "steady_state": mcp_steady,
+                    "steady_error": mcp_steady_err,
+                    "mae": mcp_mae,
+                    "rmse": mcp_rmse,
+                    "executable_rate": mcp_exec_rate,
+                    "pass_k": mcp_pass_k,
+                    "avg_latency": np.mean([r["latency_seconds"] for r in mcp_runs]),
+                    "tool_calls_count": np.mean([len(r["tool_calls"]) for r in mcp_runs])
+                },
+                "plot_path": plot_path,
+                "plot_relative": plot_filename
+            })
+            
+        # Write summary report
+        write_markdown_report(driver, report_data, output_dir, args.samples, args.k)
+    finally:
+        mcp_client.stop()
 
 def write_local_report_fallback(data: List[Dict[str, Any]], report_path: str, samples: int, k: int):
     """
