@@ -186,28 +186,66 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, p
 
 def execute_agent_loop_mock(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str, baseline: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
     """
-    Simulates tool calls to the MCP mock and returns the baseline formatted in JSON.
+    Simulates tool calls to the MCP mock or real client and returns the baseline formatted in JSON.
     """
-    # 1. create_petri_net
-    res = mcp_client.handle_tool_call("create_petri_net", {})
-    net_id = res.get("net_id")
-    tool_calls_log = [{"tool": "create_petri_net", "args": {}}]
+    tools = mcp_client.list_tools()
+    has_real_tools = any(t.get("function", {}).get("name") == "create" for t in tools)
     
-    if not net_id or "error" in res:
-        return f"Error: {res.get('error', 'Failed to create Petri net')}", tool_calls_log
+    tool_calls_log = []
+    
+    if has_real_tools:
+        # 1. create
+        res = mcp_client.handle_tool_call("create", {})
+        tool_calls_log.append({"tool": "create", "args": {}})
         
-    # 2. add_place
-    mcp_client.handle_tool_call("add_place", {"net_id": net_id, "name": "P0", "tokens": 1})
-    tool_calls_log.append({"tool": "add_place", "args": {"net_id": net_id, "name": "P0", "tokens": 1}})
-    
-    # 3. add_transition
-    mcp_client.handle_tool_call("add_transition", {"net_id": net_id, "name": "T0", "type": "exponential", "rate": 0.05})
-    tool_calls_log.append({"tool": "add_transition", "args": {"net_id": net_id, "name": "T0", "type": "exponential", "rate": 0.05}})
-    
-    # 4. run_steady_state_analysis
-    mcp_client.handle_tool_call("run_steady_state_analysis", {"net_id": net_id, "failure_condition": "P0 == 0"})
-    tool_calls_log.append({"tool": "run_steady_state_analysis", "args": {"net_id": net_id, "failure_condition": "P0 == 0"}})
-    
+        # 2. add_places
+        mcp_client.handle_tool_call("add_places", {"node_names": ["P0", "P1"]})
+        tool_calls_log.append({"tool": "add_places", "args": {"node_names": ["P0", "P1"]}})
+        
+        # 3. add_tokens
+        mcp_client.handle_tool_call("add_tokens", {"name": "P0", "num": 1})
+        tool_calls_log.append({"tool": "add_tokens", "args": {"name": "P0", "num": 1}})
+        
+        # 4. add_transitions
+        mcp_client.handle_tool_call("add_transitions", {"transition_names": ["T0"]})
+        tool_calls_log.append({"tool": "add_transitions", "args": {"transition_names": ["T0"]}})
+        
+        # 5. add_precondition
+        mcp_client.handle_tool_call("add_precondition", {"place_name": "P0", "transition_name": "T0"})
+        tool_calls_log.append({"tool": "add_precondition", "args": {"place_name": "P0", "transition_name": "T0"}})
+        
+        # 6. add_postcondition
+        mcp_client.handle_tool_call("add_postcondition", {"place_name": "P1", "transition_name": "T0"})
+        tool_calls_log.append({"tool": "add_postcondition", "args": {"place_name": "P1", "transition_name": "T0"}})
+        
+        # 7. add_EXP
+        mcp_client.handle_tool_call("add_EXP", {"transition_name": "T0", "rate": 0.05})
+        tool_calls_log.append({"tool": "add_EXP", "args": {"transition_name": "T0", "rate": 0.05}})
+        
+        # 8. execute_steady_state_analysis
+        mcp_client.handle_tool_call("execute_steady_state_analysis", {})
+        tool_calls_log.append({"tool": "execute_steady_state_analysis", "args": {}})
+        
+    else:
+        # Fallback to fittizio mock tool sequence
+        # 1. create_petri_net
+        res = mcp_client.handle_tool_call("create_petri_net", {})
+        net_id = res.get("net_id")
+        tool_calls_log.append({"tool": "create_petri_net", "args": {}})
+        
+        if net_id and "error" not in res:
+            # 2. add_place
+            mcp_client.handle_tool_call("add_place", {"net_id": net_id, "name": "P0", "tokens": 1})
+            tool_calls_log.append({"tool": "add_place", "args": {"net_id": net_id, "name": "P0", "tokens": 1}})
+            
+            # 3. add_transition
+            mcp_client.handle_tool_call("add_transition", {"net_id": net_id, "name": "T0", "type": "exponential", "rate": 0.05})
+            tool_calls_log.append({"tool": "add_transition", "args": {"net_id": net_id, "name": "T0", "type": "exponential", "rate": 0.05}})
+            
+            # 4. run_steady_state_analysis
+            mcp_client.handle_tool_call("run_steady_state_analysis", {"net_id": net_id, "failure_condition": "P0 == 0"})
+            tool_calls_log.append({"tool": "run_steady_state_analysis", "args": {"net_id": net_id, "failure_condition": "P0 == 0"}})
+
     # Return formatted baseline JSON
     raw_text = f"```json\n{json.dumps(baseline, indent=2)}\n```"
     return raw_text, tool_calls_log
