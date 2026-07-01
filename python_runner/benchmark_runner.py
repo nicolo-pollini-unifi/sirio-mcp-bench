@@ -10,6 +10,9 @@ import traceback
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict, Any, List, Tuple, Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -478,7 +481,7 @@ def main():
     parser.add_argument("--k", type=int, default=1, help="k value for Pass@k estimation")
     parser.add_argument("--output-dir", default="output/benchmark", help="Output directory for plots and reports")
     parser.add_argument("--mcp-mode", default="mock", choices=["mock", "stdio", "sse"], help="MCP server connection mode")
-    parser.add_argument("--sse-url", default="http://localhost:8081/mcp/sse", help="MCP server SSE URL (when mcp-mode is sse)")
+    parser.add_argument("--sse-url", default="http://localhost:8081/sse", help="MCP server SSE URL (when mcp-mode is sse)")
     
     args = parser.parse_args()
     
@@ -500,9 +503,9 @@ def main():
     else:
         driver = OpenAICompatibleDriver(base_url=args.openai_url, model_name=args.openai_model, api_key=args.openai_key)
         
-    # Build classpath for stdio real client
+    # Build classpath for stdio/sse real client
     classpath = ""
-    if args.mcp_mode == "stdio":
+    if args.mcp_mode in ("stdio", "sse"):
         classpath_file = os.path.join(workspace_path, "classpath.txt")
         maven_deps = ""
         if os.path.exists(classpath_file):

@@ -363,13 +363,23 @@ class SirioMCPRealClient(BaseMCPClient):
                 read_stream, write_stream = await self.exit_stack.enter_async_context(stdio_client(server_params))
             elif self.mode == "sse":
                 from mcp.client.sse import sse_client
-                if self.classpath:
+                import socket
+                port = "8081"
+                if "localhost:" in self.sse_url:
+                    parts = self.sse_url.split("localhost:")
+                    if len(parts) > 1:
+                        port = parts[1].split("/")[0]
+                        
+                is_active = False
+                try:
+                    with socket.create_connection(("localhost", int(port)), timeout=0.5):
+                        is_active = True
+                        logger.info(f"SSE Java server is already running on port {port}. Connecting directly.")
+                except Exception:
+                    pass
+                    
+                if not is_active and self.classpath:
                     import subprocess
-                    port = "8081"
-                    if "localhost:" in self.sse_url:
-                        parts = self.sse_url.split("localhost:")
-                        if len(parts) > 1:
-                            port = parts[1].split("/")[0]
                     args = [
                         "java",
                         "-cp", self.classpath,
@@ -378,9 +388,25 @@ class SirioMCPRealClient(BaseMCPClient):
                         "--spring.ai.mcp.server.stdio=false",
                         f"--server.port={port}"
                     ]
-                    logger.info(f"Launching SSE Java server in background on port {port}...")
+                    logger.info(f"SSE Java server is not running. Launching in background on port {port}...")
                     self.sse_process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    await asyncio.sleep(4.0)
+                    
+                    logger.info("Waiting for SSE Java server to boot up and open port...")
+                    boot_success = False
+                    for attempt in range(20):  # try for up to 10 seconds (20 * 0.5s)
+                        try:
+                            with socket.create_connection(("localhost", int(port)), timeout=0.5):
+                                boot_success = True
+                                logger.info("SSE Java server port is open. Proceeding to connect.")
+                                break
+                        except Exception:
+                            await asyncio.sleep(0.5)
+                            
+                    if not boot_success:
+                        logger.warning("SSE Java server did not open port in time. Attempting connection anyway...")
+                elif not is_active and not self.classpath:
+                    logger.warning("SSE Java server is not running and no classpath was provided to start it.")
+                    
                 logger.info(f"Connecting to SSE server at: {self.sse_url}")
                 read_stream, write_stream = await self.exit_stack.enter_async_context(sse_client(url=self.sse_url))
             else:
