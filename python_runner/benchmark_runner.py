@@ -462,7 +462,7 @@ def main():
     parser = argparse.ArgumentParser(description="Fault Tree Quantitative Analysis Benchmarking Orchestrator")
     parser.add_argument("--config", default="test_cases_example.json", help="Path to input test cases configuration JSON")
     parser.add_argument("--api-key", default=None, help="Gemini API Key (Google AI Studio)")
-    parser.add_argument("--model", default="gemini-2.5-pro", help="Gemini model name")
+    parser.add_argument("--model", default="gemini-2.5-flash", help="Gemini model name")
     parser.add_argument("--provider", default="gemini", choices=["gemini", "openai", "mock"], help="Model provider endpoint")
     parser.add_argument("--openai-url", default="http://localhost:8000/v1", help="OpenAI-compatible endpoint url")
     parser.add_argument("--openai-model", default="qwen-2.5-coder-32b", help="Model name for OpenAI endpoint")
