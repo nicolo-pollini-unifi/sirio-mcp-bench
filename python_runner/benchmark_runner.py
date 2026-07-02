@@ -25,11 +25,12 @@ from metrics import compute_steady_state_error, compute_curve_metrics, is_soluti
 SYSTEM_INSTRUCTION = (
     "You are a reliability engineering expert assistant. Your task is to perform a quantitative unreliability analysis "
     "for a Fault Tree top-level event. You must compute the steady-state probability of system failure, and the transient "
-    "failure probability (unreliability) curve over time. You may have access to a tool suite that executes the formal "
-    "calculations using the SIRIO library. If tools are available, you should use them to ensure absolute mathematical precision. "
+    "failure probability (unreliability) curve over time. If tools are available, you should use them to ensure absolute mathematical precision. "
+    "To avoid token truncation, KEEP your thoughts and reasoning extremely brief and concise. Start calling the Petri Net tools immediately to construct the model. "
     "Ensure that your final result contains the calculated values in a structured JSON code block exactly as requested, "
     "without any additional text inside the markdown block."
 )
+
 
 USER_PROMPT_TEMPLATE = (
     "Perform the unreliability analysis for the following event configuration:\n"
@@ -105,7 +106,7 @@ def run_java_baseline(workspace_path: str, case_json_path: str, case_id: str) ->
         except OSError:
             pass
 
-def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, prompt: str) -> Tuple[str, List[Dict[str, Any]]]:
+def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, prompt: str) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Executes the Gemini API conversation loop, routing tool calls to the MCP client.
     """
@@ -130,10 +131,11 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, p
     # Initialize history
     history = [{"role": "user", "parts": [{"text": prompt}]}]
     tool_calls_log = []
+    interactions_trace = []
     full_text = ""
     
-    # Limit loop steps to prevent infinite loops
-    for _ in range(30):
+    # Limit loop steps to prevent infinite loops (using 100 turns to avoid timeouts for long sequences)
+    for _ in range(100):
         payload = {
             "contents": history,
             "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
@@ -151,6 +153,13 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, p
             
         content = candidates[0].get("content", {})
         parts = content.get("parts", [])
+        
+        # Check for text in parts and document it in the trace
+        text_parts = [p.get("text", "") for p in parts if "text" in p]
+        if text_parts:
+            text_content = "".join(text_parts).strip()
+            if text_content:
+                interactions_trace.append({"type": "text", "content": text_content})
         
         # Check if model requested a tool call
         function_calls = [p.get("functionCall") for p in parts if "functionCall" in p]
@@ -173,7 +182,7 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, p
                 })
                 continue
                 
-            return full_text, tool_calls_log
+            return full_text, tool_calls_log, interactions_trace
             
         # Add model's assistant turn to history
         history.append({
@@ -188,6 +197,12 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, p
             args = fc.get("args", {})
             result = mcp_client.handle_tool_call(name, args)
             tool_calls_log.append({"tool": name, "args": args, "result": result})
+            interactions_trace.append({
+                "type": "tool_call",
+                "name": name,
+                "args": args,
+                "result": result
+            })
             
             response_parts.append({
                 "functionResponse": {
@@ -204,7 +219,7 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, p
         
     raise TimeoutError("LLM exceeded max tool call iteration limit")
 
-def execute_agent_loop_mock(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str, baseline: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]]:
+def execute_agent_loop_mock(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str, baseline: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Simulates tool calls to the MCP mock or real client and returns the baseline formatted in JSON.
     """
@@ -212,60 +227,112 @@ def execute_agent_loop_mock(driver: LLMDriver, mcp_client: BaseMCPClient, prompt
     has_real_tools = any(t.get("function", {}).get("name") == "create" for t in tools)
     
     tool_calls_log = []
+    interactions_trace = []
     
+    # Helper to map arguments based on what parameter names the MCP server/mock expects
+    def map_args(tool_name: str, args_dict: Dict[str, Any]) -> Dict[str, Any]:
+        tool_schema = next((t for t in tools if t.get("function", {}).get("name") == tool_name), None)
+        if not tool_schema:
+            return args_dict
+        properties = tool_schema.get("function", {}).get("parameters", {}).get("properties", {})
+        if "arg0" in properties:
+            mapped = {}
+            order_map = {
+                "add_places": ["node_names"],
+                "add_tokens": ["name", "num"],
+                "add_transitions": ["transition_names"],
+                "add_precondition": ["place_name", "transition_name"],
+                "add_postcondition": ["place_name", "transition_name"],
+                "add_EXP": ["transition_name", "rate"]
+            }
+            if tool_name in order_map:
+                param_names = order_map[tool_name]
+                for idx, orig_name in enumerate(param_names):
+                    if orig_name in args_dict:
+                        mapped[f"arg{idx}"] = args_dict[orig_name]
+                return mapped
+        return args_dict
+
     def call_tool(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         res = mcp_client.handle_tool_call(name, args)
         tool_calls_log.append({"tool": name, "args": args, "result": res})
+        interactions_trace.append({
+            "type": "tool_call",
+            "name": name,
+            "args": args,
+            "result": res
+        })
         return res
         
+    disclaimer = "/* DISCLAIMER: This is a simulated/mock agent tool-use workflow. */"
+    interactions_trace.append({"type": "text", "content": f"{disclaimer}\nInitial prompt received. Constructing unreliability analysis Petri net structure..."})
+    
     if has_real_tools:
         # 1. create
+        interactions_trace.append({"type": "text", "content": "Creating new empty Petri net..."})
         call_tool("create", {})
         
         # 2. add_places
-        call_tool("add_places", {"node_names": ["P0", "P1"]})
+        interactions_trace.append({"type": "text", "content": "Adding state places (P0, P1)..."})
+        call_tool("add_places", map_args("add_places", {"node_names": ["P0", "P1"]}))
         
         # 3. add_tokens
-        call_tool("add_tokens", {"name": "P0", "num": 1})
+        interactions_trace.append({"type": "text", "content": "Setting initial tokens count..."})
+        call_tool("add_tokens", map_args("add_tokens", {"name": "P0", "num": 1}))
         
         # 4. add_transitions
-        call_tool("add_transitions", {"transition_names": ["T0"]})
+        interactions_trace.append({"type": "text", "content": "Adding transitions..."})
+        call_tool("add_transitions", map_args("add_transitions", {"transition_names": ["T0"]}))
         
         # 5. add_precondition
-        call_tool("add_precondition", {"place_name": "P0", "transition_name": "T0"})
+        interactions_trace.append({"type": "text", "content": "Connecting places to transitions (preconditions)..."})
+        call_tool("add_precondition", map_args("add_precondition", {"place_name": "P0", "transition_name": "T0"}))
         
         # 6. add_postcondition
-        call_tool("add_postcondition", {"place_name": "P1", "transition_name": "T0"})
+        interactions_trace.append({"type": "text", "content": "Connecting transitions to places (postconditions)..."})
+        call_tool("add_postcondition", map_args("add_postcondition", {"place_name": "P1", "transition_name": "T0"}))
         
         # 7. add_EXP
-        call_tool("add_EXP", {"transition_name": "T0", "rate": 0.05})
+        interactions_trace.append({"type": "text", "content": "Configuring transition stochastic parameters..."})
+        call_tool("add_EXP", map_args("add_EXP", {"transition_name": "T0", "rate": 0.05}))
         
         # 8. execute_steady_state_analysis
+        interactions_trace.append({"type": "text", "content": "Executing steady state analysis on the network..."})
         call_tool("execute_steady_state_analysis", {})
         
     else:
         # Fallback to fittizio mock tool sequence
-        # 1. create_petri_net
+        interactions_trace.append({"type": "text", "content": "Initializing mock Petri net instance..."})
         res = call_tool("create_petri_net", {})
         net_id = res.get("net_id")
         
         if net_id and "error" not in res:
-            # 2. add_place
+            interactions_trace.append({"type": "text", "content": "Adding place P0 with 1 token..."})
             call_tool("add_place", {"net_id": net_id, "name": "P0", "tokens": 1})
             
-            # 3. add_transition
+            interactions_trace.append({"type": "text", "content": "Adding transition T0..."})
             call_tool("add_transition", {"net_id": net_id, "name": "T0", "type": "exponential", "rate": 0.05})
             
-            # 4. run_steady_state_analysis
+            interactions_trace.append({"type": "text", "content": "Executing unreliability analysis on P0..."})
             call_tool("run_steady_state_analysis", {"net_id": net_id, "failure_condition": "P0 == 0"})
 
-    # Return formatted baseline JSON
-    raw_text = f"```json\n{json.dumps(baseline, indent=2)}\n```"
-    return raw_text, tool_calls_log
+    # Return formatted baseline JSON with explanation and disclaimer
+    reasoning = (
+        f"{disclaimer}\n\n"
+        "Using the MCP tool suite to analyze the Fault Tree unreliability:\n"
+        "1. Created a new Petri net instance.\n"
+        "2. Added places and initial tokens for the component states.\n"
+        "3. Added transitions and set their exponential failure/repair rates.\n"
+        "4. Connected places and transitions using preconditions and postconditions.\n"
+        "5. Executed steady state and transient analysis tools to retrieve accurate numerical results.\n\n"
+        f"```json\n{json.dumps(baseline, indent=2)}\n```"
+    )
+    interactions_trace.append({"type": "text", "content": reasoning})
+    return reasoning, tool_calls_log, interactions_trace
 
 import requests # imported for the execute loops
 
-def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mcp_client: BaseMCPClient, prompt: str) -> Tuple[str, List[Dict[str, Any]]]:
+def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mcp_client: BaseMCPClient, prompt: str) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Executes the OpenAI-compatible local API loop, routing tool calls to the MCP server.
     """
@@ -279,17 +346,19 @@ def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mcp_client: BaseMC
         {"role": "user", "content": prompt}
     ]
     tool_calls_log = []
+    interactions_trace = []
     full_text = ""
     
     mcp_tools = mcp_client.list_tools()
     
-    for _ in range(30):
+    # Limit loop steps to prevent infinite loops (using 100 turns to avoid timeouts for long sequences)
+    for _ in range(100):
         payload = {
             "model": driver.model_name,
             "messages": messages,
             "tools": mcp_tools,
             "temperature": 0.0,
-            "max_tokens": 4096
+            "max_tokens": 8192
         }
         
         response = requests.post(driver.url, headers=headers, json=payload)
@@ -301,6 +370,10 @@ def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mcp_client: BaseMC
             raise ValueError(f"No response choices returned: {response_json}")
             
         msg = choices[0].get("message", {})
+        text_content = msg.get("content", "")
+        if text_content:
+            interactions_trace.append({"type": "text", "content": text_content.strip()})
+            
         tool_calls = msg.get("tool_calls", [])
         
         # Append message to list
@@ -316,7 +389,7 @@ def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mcp_client: BaseMC
                 messages.append({"role": "user", "content": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."})
                 continue
                 
-            return full_text, tool_calls_log
+            return full_text, tool_calls_log, interactions_trace
             
         for tc in tool_calls:
             name = tc["function"]["name"]
@@ -330,6 +403,12 @@ def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mcp_client: BaseMC
                 
             result = mcp_client.handle_tool_call(name, args)
             tool_calls_log.append({"tool": name, "args": args, "result": result})
+            interactions_trace.append({
+                "type": "tool_call",
+                "name": name,
+                "args": args,
+                "result": result
+            })
             
             messages.append({
                 "role": "tool",
@@ -393,6 +472,7 @@ def run_evaluation_for_mode(
         steady_state = float('nan')
         transient_result = []
         error_msg = None
+        interactions_trace = []
         
         try:
             if isinstance(driver, MockLLMDriver):
@@ -401,11 +481,11 @@ def run_evaluation_for_mode(
             if with_mcp:
                 # With MCP loop
                 if provider == "gemini":
-                    raw_text, tool_calls = execute_agent_loop_gemini(driver, mcp_client, prompt)
+                    raw_text, tool_calls, interactions_trace = execute_agent_loop_gemini(driver, mcp_client, prompt)
                 elif provider == "mock":
-                    raw_text, tool_calls = execute_agent_loop_mock(driver, mcp_client, prompt, baseline)
+                    raw_text, tool_calls, interactions_trace = execute_agent_loop_mock(driver, mcp_client, prompt, baseline)
                 else:
-                    raw_text, tool_calls = execute_agent_loop_openai(driver, mcp_client, prompt)
+                    raw_text, tool_calls, interactions_trace = execute_agent_loop_openai(driver, mcp_client, prompt)
             else:
                 # Without MCP direct prompt with continuation support
                 if provider == "gemini":
@@ -428,6 +508,7 @@ def run_evaluation_for_mode(
                         parts = content.get("parts", [])
                         text = "".join([p.get("text", "") for p in parts if "text" in p])
                         raw_text += text
+                        interactions_trace.append({"type": "text", "content": text})
                         
                         if "```json" in raw_text and parse_json_from_response(raw_text):
                             break
@@ -450,7 +531,7 @@ def run_evaluation_for_mode(
                             "model": driver.model_name,
                             "messages": messages,
                             "temperature": 0.0,
-                            "max_tokens": 4096
+                            "max_tokens": 8192
                         }
                         response = requests.post(driver.url, headers=headers, json=payload)
                         response.raise_for_status()
@@ -461,6 +542,7 @@ def run_evaluation_for_mode(
                         msg = choices[0].get("message", {})
                         text = msg.get("content", "") or ""
                         raw_text += text
+                        interactions_trace.append({"type": "text", "content": text})
                         
                         if "```json" in raw_text and parse_json_from_response(raw_text):
                             break
@@ -470,6 +552,7 @@ def run_evaluation_for_mode(
                 else:
                     # Mock driver fallback
                     raw_text = driver.generate(prompt, SYSTEM_INSTRUCTION)
+                    interactions_trace.append({"type": "text", "content": raw_text})
                 
             if verbose_interactions:
                 logger.info(f"\n==================== [VERBOSE] Prompt Sent to LLM (MCP={with_mcp}, Sample={i}) ====================\n{prompt}\n========================================================================================\n")
@@ -485,7 +568,7 @@ def run_evaluation_for_mode(
             else:
                 error_msg = "Output JSON format was invalid or fields are missing."
         except Exception as e:
-            error_msg = str(e)
+            error_msg = str(e) or repr(e)
             logger.error(f"Error executing run: {e}")
             
         latency = time.time() - start_time
@@ -506,6 +589,7 @@ def run_evaluation_for_mode(
             "run_index": i,
             "raw_text": raw_text,
             "tool_calls": tool_calls,
+            "interactions_trace": interactions_trace,
             "success": success,
             "parsed_data": parsed_data,
             "steady_state": steady_state,
@@ -684,6 +768,8 @@ def main():
             
             # 4. LLM Run with MCP
             logger.info(f"Running LLM with MCP (Mode: tool calling enabled)...")
+            mcp_client.disconnect()
+            mcp_client.start()
             mcp_runs, mcp_exec_rate, mcp_correct_count = run_evaluation_for_mode(
                 driver=driver,
                 mcp_client=mcp_client,
@@ -779,12 +865,23 @@ def main():
                             success = run["success"]
                             correct = run["correct"]
                             error = run["error"]
+                            trace = run.get("interactions_trace", [])
                             
                             f.write(f"#### Run {idx} (Latency: {latency:.2f}s, Success: {success}, Correct: {correct})\n\n")
                             f.write("**Prompt Sent to LLM:**\n")
                             f.write(f"```\n{item['prompt']}\n```\n\n")
-                            f.write("**LLM Response:**\n")
-                            f.write(f"```\n{run['raw_text']}\n```\n\n")
+                            
+                            f.write("**Chronological Interaction Trace:**\n\n")
+                            if trace:
+                                for step_idx, step in enumerate(trace):
+                                    if step["type"] == "text":
+                                        f.write(f"##### Turn {step_idx + 1} - LLM Response:\n{step['content']}\n\n")
+                                    elif step["type"] == "tool_call":
+                                        f.write(f"##### Turn {step_idx + 1} - MCP Tool Call:\n`{step['name']}({json.dumps(step['args'])})` -> `{json.dumps(step['result'])}`\n\n")
+                            else:
+                                f.write("**LLM Response:**\n")
+                                f.write(f"```\n{run['raw_text']}\n```\n\n")
+                                
                             if error:
                                 f.write(f"**Error:** `{error}`\n\n")
                                 
@@ -795,27 +892,30 @@ def main():
                             success = run["success"]
                             correct = run["correct"]
                             error = run["error"]
-                            tool_calls = run["tool_calls"]
+                            trace = run.get("interactions_trace", [])
                             
                             f.write(f"#### Run {idx} (Latency: {latency:.2f}s, Success: {success}, Correct: {correct})\n\n")
                             f.write("**Initial Prompt Sent to LLM:**\n")
                             f.write(f"```\n{item['prompt']}\n```\n\n")
                             
-                            f.write("**MCP Tool Call Sequence:**\n\n")
-                            if tool_calls:
-                                f.write("| Step | Tool Called | Arguments | Result |\n")
-                                f.write("|---|---|---|---|\n")
-                                for step_idx, tc in enumerate(tool_calls):
-                                    t_name = tc.get("tool", "")
-                                    t_args = json.dumps(tc.get("args", {}))
-                                    t_res = json.dumps(tc.get("result", ""))
-                                    f.write(f"| {step_idx + 1} | `{t_name}` | `{t_args}` | `{t_res}` |\n")
-                                f.write("\n")
+                            f.write("**Chronological Interaction Trace:**\n\n")
+                            if trace:
+                                for step_idx, step in enumerate(trace):
+                                    if step["type"] == "text":
+                                        f.write(f"##### Turn {step_idx + 1} - LLM Response:\n{step['content']}\n\n")
+                                    elif step["type"] == "tool_call":
+                                        f.write(f"##### Turn {step_idx + 1} - MCP Tool Call:\n`{step['name']}({json.dumps(step['args'])})` -> `{json.dumps(step['result'])}`\n\n")
                             else:
-                                f.write("*No tool calls were made.*\n\n")
+                                tool_calls = run.get("tool_calls", [])
+                                if tool_calls:
+                                    f.write("| Step | Tool Called | Arguments | Result |\n")
+                                    f.write("|---|---|---|---|\n")
+                                    for tc_idx, tc in enumerate(tool_calls):
+                                        f.write(f"| {tc_idx + 1} | `{tc.get('tool')}` | `{json.dumps(tc.get('args'))}` | `{json.dumps(tc.get('result'))}` |\n")
+                                    f.write("\n")
+                                f.write("**Final LLM Response:**\n")
+                                f.write(f"```\n{run['raw_text']}\n```\n\n")
                                 
-                            f.write("**Final LLM Response:**\n")
-                            f.write(f"```\n{run['raw_text']}\n```\n\n")
                             if error:
                                 f.write(f"**Error:** `{error}`\n\n")
                 logger.info(f"LLM interactions log successfully saved to {log_path}.")

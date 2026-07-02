@@ -278,6 +278,10 @@ class BaseMCPClient(ABC):
         """Stop the connection and release resources."""
         pass
 
+    def disconnect(self) -> None:
+        """Disconnect the current session without closing resources permanently."""
+        pass
+
 
 class SirioMCPMock(BaseMCPClient):
     """
