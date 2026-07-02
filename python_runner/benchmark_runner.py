@@ -344,7 +344,8 @@ def run_evaluation_for_mode(
     baseline: Dict[str, Any],
     with_mcp: bool,
     provider: str,
-    num_samples: int
+    num_samples: int,
+    verbose_interactions: bool = False
 ) -> Tuple[List[Dict[str, Any]], float, float]:
     """
     Runs the evaluation for a single mode (with or without MCP), possibly multiple times
@@ -379,6 +380,12 @@ def run_evaluation_for_mode(
             else:
                 # Without MCP direct prompt
                 raw_text = driver.generate(prompt, SYSTEM_INSTRUCTION)
+                
+            if verbose_interactions:
+                logger.info(f"\n==================== [VERBOSE] Prompt Sent to LLM (MCP={with_mcp}, Sample={i}) ====================\n{prompt}\n========================================================================================\n")
+                logger.info(f"\n==================== [VERBOSE] Raw LLM Response (MCP={with_mcp}, Sample={i}) ====================\n{raw_text}\n=======================================================================================\n")
+                if tool_calls:
+                    logger.info(f"\n==================== [VERBOSE] MCP Tool Call Trace (MCP={with_mcp}, Sample={i}) ====================\n{json.dumps(tool_calls, indent=2)}\n=======================================================================================\n")
                 
             parsed_data = parse_json_from_response(raw_text)
             if parsed_data and "steadyState" in parsed_data and "transientResult" in parsed_data:
@@ -472,7 +479,7 @@ def main():
     parser.add_argument("--output-dir", default="output/benchmark", help="Output directory for plots and reports")
     parser.add_argument("--mcp-mode", default="mock", choices=["mock", "stdio", "sse"], help="MCP server connection mode")
     parser.add_argument("--sse-url", default="http://localhost:8081/sse", help="MCP server SSE URL (when mcp-mode is sse)")
-    parser.add_argument("--save-interactions", action="store_true", help="Save detailed LLM prompts, responses, and MCP tool calls to output folder")
+    parser.add_argument("--verbose-interactions", action="store_true", help="Print detailed LLM prompts, responses, and tool calls to console during execution")
     
     args = parser.parse_args()
     
@@ -571,7 +578,8 @@ def main():
                 baseline=baseline,
                 with_mcp=False,
                 provider=args.provider,
-                num_samples=args.samples
+                num_samples=args.samples,
+                verbose_interactions=args.verbose_interactions
             )
             no_mcp_pass_k = compute_pass_at_k(args.samples, no_mcp_correct_count, args.k)
             
@@ -593,7 +601,8 @@ def main():
                 baseline=baseline,
                 with_mcp=True,
                 provider=args.provider,
-                num_samples=args.samples
+                num_samples=args.samples,
+                verbose_interactions=args.verbose_interactions
             )
             mcp_pass_k = compute_pass_at_k(args.samples, mcp_correct_count, args.k)
             
@@ -646,19 +655,18 @@ def main():
                 "plot_relative": plot_filename
             })
             
-            if args.save_interactions:
-                interaction_history.append({
-                    "case_id": case_id,
-                    "prompt": prompt,
-                    "no_mcp_runs": no_mcp_runs,
-                    "mcp_runs": mcp_runs
-                })
+            interaction_history.append({
+                "case_id": case_id,
+                "prompt": prompt,
+                "no_mcp_runs": no_mcp_runs,
+                "mcp_runs": mcp_runs
+            })
             
         # Write summary report
-        write_markdown_report(driver, report_data, output_dir, args.samples, args.k)
+        write_markdown_report(driver, report_data, output_dir, args.samples, args.k, interaction_history)
         
-        # Write interactions log if requested
-        if args.save_interactions and interaction_history:
+        # Write interactions log
+        if interaction_history:
             from datetime import datetime
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             log_filename = f"interactions_{timestamp}.md"
@@ -720,7 +728,7 @@ def main():
                             f.write(f"```\n{run['raw_text']}\n```\n\n")
                             if error:
                                 f.write(f"**Error:** `{error}`\n\n")
-                logger.info(f"LLM interactions log successfully saved.")
+                logger.info(f"LLM interactions log successfully saved to {log_path}.")
             except Exception as e:
                 logger.error(f"Failed to save LLM interactions log: {e}")
     finally:
@@ -783,7 +791,7 @@ def write_local_report_fallback(data: List[Dict[str, Any]], report_path: str, sa
             "hallucinates mathematical probability calculations, leading to higher curve MAE/RMSE.\n"
         )
 
-def write_markdown_report(driver: LLMDriver, data: List[Dict[str, Any]], output_dir: str, samples: int, k: int):
+def write_markdown_report(driver: LLMDriver, data: List[Dict[str, Any]], output_dir: str, samples: int, k: int, interaction_history: Optional[List[Dict[str, Any]]] = None):
     """
     Generates a formal, technical evaluation report summarizing the benchmark findings
     by calling the LLM to write the report dynamically based on the results.
@@ -796,51 +804,69 @@ def write_markdown_report(driver: LLMDriver, data: List[Dict[str, Any]], output_
         write_local_report_fallback(data, report_path, samples, k)
         logger.info(f"Benchmark report generated successfully (dry-run mode) at: {report_path}")
         return
+        
+    interactions_summary = ""
+    if interaction_history:
+        interactions_summary = "\nHere is a summary of the LLM interactions during the experiment:\n"
+        for item in interaction_history:
+            interactions_summary += f"\n- Case: {item['case_id']}\n"
+            interactions_summary += "  * Direct Prompt (No MCP) samples:\n"
+            for run in item["no_mcp_runs"]:
+                interactions_summary += f"    - Run {run['run_index']}: Latency={run['latency_seconds']:.2f}s, Success={run['success']}, Correct={run['correct']}, Error={run['error']}\n"
+            interactions_summary += "  * Tool Calling (MCP) samples:\n"
+            for run in item["mcp_runs"]:
+                tcs = [f"{tc.get('tool')}({json.dumps(tc.get('args'))}) -> {json.dumps(tc.get('result'))}" for tc in run["tool_calls"]]
+                tcs_str = " | ".join(tcs) if tcs else "None"
+                interactions_summary += f"    - Run {run['run_index']}: Latency={run['latency_seconds']:.2f}s, Success={run['success']}, Correct={run['correct']}, ToolCalls=[{tcs_str}], Error={run['error']}\n"
 
     # Prompt schema designed to instruct the LLM to write a technical discussion around metrics
     prompt = f"""You are a reliability engineering and academic writing expert. Your task is to write a formal, technical evaluation report summarizing the findings of a benchmarking experiment.
-
+ 
 The experiment compared:
 1. Baseline (Ground Truth): Petri Net formal execution via the SIRIO library (Java).
 2. LLM without MCP: Direct prompting of the model.
 3. LLM+MCP: The model with low-level Petri Net tool access (places, transitions, markings, analysis executions).
-
+ 
 Here is the structured data collected from the experiment:
 {json.dumps(data, indent=2)}
 
+Here is the detailed trace of the LLM interaction history (prompts, tool calls, results):
+{interactions_summary}
+ 
 Parameters:
 - Samples per case: {samples}
 - Pass@k (k): {k}
-
+ 
 Please generate the report in raw Markdown. Follow this structure strictly:
-
+ 
 # Quantitative Benchmark Report: LLM vs LLM+MCP on Fault Tree Unreliability
-
+ 
 ## 1. Executive Summary
 [Summarize the goal of comparing LLM vs LLM+MCP on quantitative fault tree analysis, the findings, and the main conclusions.]
-
+ 
 ## 2. Experimental Setup
 [Detail the methodology, model used, baseline solver (SIRIO), and the tools made available to LLM+MCP (low-level Petri net building blocks without higher-level fault tree concepts).]
-
+ 
 ## 3. Comparative Performance Metrics
 [Provide a markdown table summarizing the performance metrics. You MUST build the table based on the provided JSON data. Include columns for Case ID, Config, Steady-State Prob, SS Abs Error, Curve MAE, Curve RMSE, Executable Rate, and Pass@k.]
-
+ 
 ## 4. Evaluation and Transient Curves
 [For each case, include a sub-section with the comparison plot. Example format:
 ### Case: <case_id>
 ![Transient Curve comparison](<plot_relative_path>)
 Add some brief observations on the curve alignments.]
-
+ 
 ## 5. Architectural Findings & Discussion
 [Provide a detailed and rigorous technical analysis. Discuss:
 - The challenge of translating a Fault Tree logic expression into low-level Petri Net components (places, transitions, enabling functions).
 - Why the LLM+MCP configuration might fail or succeed depending on the model's capability to structure state spaces.
+  Make specific observations on what actually happened during the MCP calls (which tools were launched, what results or errors they produced) by referencing the interaction trace details.
 - Why the LLM without MCP is prone to mathematical approximations or hallucinations, leading to higher transient curve errors.
 - Recommendations for future MCP tool designs (e.g., higher-level fault tree gates vs low-level Petri net primitives).]
-
+ 
 Do not wrap the output in markdown code blocks (e.g. do not start with ```markdown and do not end with ```). Return only the raw markdown content itself.
 """
-
+ 
     logger.info("Invoking LLM to generate formal benchmark report...")
     try:
         report_content = driver.generate(prompt, "You are a technical report writing assistant. You must produce output in raw Markdown format.")
@@ -853,7 +879,7 @@ Do not wrap the output in markdown code blocks (e.g. do not start with ```markdo
         if report_content.endswith("```"):
             report_content = report_content.rsplit("```", 1)[0]
         report_content = report_content.strip()
-
+ 
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(report_content)
         logger.info(f"Dynamic LLM benchmark report generated successfully at: {report_path}")
