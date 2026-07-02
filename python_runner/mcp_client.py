@@ -563,7 +563,7 @@ class SirioMCPMock(BaseMCPClient):
                 
         except Exception as e:
             logger.error(f"Error handling tool call {name}: {e}")
-            return {"error": str(e)}
+            return {"error": str(e) or repr(e)}
 
     def stop(self) -> None:
         logger.info("Stopping SirioMCPMock.")
@@ -716,7 +716,7 @@ class SirioMCPRealClient(BaseMCPClient):
                 
         except Exception as e:
             logger.error(f"Error executing real tool {name}: {e}")
-            return {"error": str(e)}
+            return {"error": str(e) or repr(e)}
 
     def disconnect(self) -> None:
         logger.info("Disconnecting SirioMCPRealClient session...")
