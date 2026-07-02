@@ -380,7 +380,7 @@ class SirioMCPMock(BaseMCPClient):
                 return {"status": "Done"}
                 
             elif name == "add_places":
-                names = arguments.get("node_names", [])
+                names = arguments.get("arg0") or arguments.get("node_names", [])
                 for p_name in names:
                     if not any(p["name"] == p_name for p in self.active_net["places"]):
                         self.active_net["places"].append({
@@ -390,8 +390,13 @@ class SirioMCPMock(BaseMCPClient):
                 return {"status": "Done"}
                 
             elif name == "add_tokens":
-                p_name = arguments.get("name")
-                num = arguments.get("num", 0)
+                p_name = arguments.get("arg0") or arguments.get("name")
+                num = arguments.get("arg1") or arguments.get("num", 0)
+                if isinstance(num, str):
+                    try:
+                        num = int(num)
+                    except ValueError:
+                        pass
                 for p in self.active_net["places"]:
                     if p["name"] == p_name:
                         p["tokens"] += num
@@ -399,7 +404,7 @@ class SirioMCPMock(BaseMCPClient):
                 return {"status": "Done"}
                 
             elif name == "add_transitions":
-                names = arguments.get("transition_names", [])
+                names = arguments.get("arg0") or arguments.get("transition_names", [])
                 for t_name in names:
                     if not any(t["name"] == t_name for t in self.active_net["transitions"]):
                         self.active_net["transitions"].append({
@@ -410,8 +415,8 @@ class SirioMCPMock(BaseMCPClient):
                 return {"status": "Done"}
                 
             elif name == "add_precondition":
-                p_name = arguments.get("place_name")
-                t_name = arguments.get("transition_name")
+                p_name = arguments.get("arg0") or arguments.get("place_name")
+                t_name = arguments.get("arg1") or arguments.get("transition_name")
                 self.active_net["arcs"].append({
                     "from": p_name,
                     "to": t_name,
@@ -420,8 +425,8 @@ class SirioMCPMock(BaseMCPClient):
                 return {"status": "Done"}
                 
             elif name == "add_postcondition":
-                p_name = arguments.get("place_name")
-                t_name = arguments.get("transition_name")
+                p_name = arguments.get("arg0") or arguments.get("place_name")
+                t_name = arguments.get("arg1") or arguments.get("transition_name")
                 self.active_net["arcs"].append({
                     "from": t_name,
                     "to": p_name,
@@ -430,8 +435,13 @@ class SirioMCPMock(BaseMCPClient):
                 return {"status": "Done"}
                 
             elif name == "add_EXP":
-                t_name = arguments.get("transition_name")
-                rate = arguments.get("rate", 1.0)
+                t_name = arguments.get("arg0") or arguments.get("transition_name")
+                rate = arguments.get("arg1") or arguments.get("rate", 1.0)
+                if isinstance(rate, str):
+                    try:
+                        rate = float(rate)
+                    except ValueError:
+                        pass
                 for t in self.active_net["transitions"]:
                     if t["name"] == t_name:
                         t["type"] = "exponential"
@@ -703,6 +713,16 @@ class SirioMCPRealClient(BaseMCPClient):
         except Exception as e:
             logger.error(f"Error executing real tool {name}: {e}")
             return {"error": str(e)}
+
+    def disconnect(self) -> None:
+        logger.info("Disconnecting SirioMCPRealClient session...")
+        if self.exit_stack:
+            try:
+                self.loop.run_until_complete(self.exit_stack.aclose())
+            except Exception as e:
+                logger.debug(f"Exception during exit stack cleanup: {e}")
+            self.exit_stack = None
+            self.session = None
 
     def stop(self) -> None:
         logger.info("Stopping SirioMCPRealClient.")

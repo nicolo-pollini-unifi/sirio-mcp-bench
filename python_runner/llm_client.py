@@ -127,7 +127,7 @@ class MockLLMDriver(LLMDriver):
         self.baseline_data = baseline_data
 
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
-        # Returns a JSON block containing baseline data (possibly with slight perturbations)
+        # Returns a simulated chain of thought followed by the JSON block containing baseline data
         data = self.baseline_data or {
             "steadyState": 0.05,
             "transientResult": [
@@ -136,4 +136,14 @@ class MockLLMDriver(LLMDriver):
                 [100.0, 0.05]
             ]
         }
-        return f"Simulated unreliability result:\n```json\n{json.dumps(data, indent=2)}\n```"
+        
+        cot_explanation = (
+            "/* DISCLAIMER: This is a simulated/mock LLM response for dry-run testing. */\n\n"
+            "To perform the unreliability analysis of the given event configuration, we follow these steps:\n"
+            "1. Identify the logic gates and leaf events. The logic expression is (GE1 & GE2 & GE3) | (GE4 & GE5).\n"
+            "2. Under steady state, since all components are repairable (modeled as two-state Markov chains with failure and repair rates), the system unreliability converges to a steady state probability. We compute this by solving the steady state vector of the GSPN.\n"
+            "3. Under transient analysis, we solve the differential equations of state probability transition over the specified time range [0, maxTime] with timeStep step size.\n\n"
+            "Below is the calculated steady-state and transient unreliability results:\n"
+            f"```json\n{json.dumps(data, indent=2)}\n```"
+        )
+        return cot_explanation
