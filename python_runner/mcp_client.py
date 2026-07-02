@@ -111,6 +111,144 @@ SIRIO_MOCK_TOOL_SCHEMAS = [
                 "required": ["net_id", "failure_condition", "max_time", "time_step"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create",
+            "description": "Create a new empty Petri net.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_places",
+            "description": "Add new places to the Petri net.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "node_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of place names to add."
+                    }
+                },
+                "required": ["node_names"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_tokens",
+            "description": "Add tokens to a specific place.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "The name of the place."},
+                    "num": {"type": "integer", "description": "Number of tokens to add."}
+                },
+                "required": ["name", "num"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_transitions",
+            "description": "Add new transitions to the Petri net.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "transition_names": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of transition names to add."
+                    }
+                },
+                "required": ["transition_names"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_precondition",
+            "description": "Add a precondition arc from a place to a transition.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "place_name": {"type": "string", "description": "The name of the place."},
+                    "transition_name": {"type": "string", "description": "The name of the transition."}
+                },
+                "required": ["place_name", "transition_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_postcondition",
+            "description": "Add a postcondition arc from a transition to a place.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "place_name": {"type": "string", "description": "The name of the place."},
+                    "transition_name": {"type": "string", "description": "The name of the transition."}
+                },
+                "required": ["place_name", "transition_name"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_EXP",
+            "description": "Configure an exponential transition.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "transition_name": {"type": "string", "description": "The transition name."},
+                    "rate": {"type": "number", "description": "The exponential rate parameter lambda."}
+                },
+                "required": ["transition_name", "rate"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_steady_state_analysis",
+            "description": "Runs steady-state unreliability analysis.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_transient_analysis",
+            "description": "Runs transient unreliability analysis.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "timePoints": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "description": "List of time points."
+                    }
+                },
+                "required": ["timePoints"]
+            }
+        }
     }
 ]
 
@@ -150,6 +288,11 @@ class SirioMCPMock(BaseMCPClient):
     def __init__(self, workspace_path: str):
         self.workspace_path = os.path.abspath(workspace_path)
         self.nets: Dict[str, Dict[str, Any]] = {}
+        self.active_net: Dict[str, Any] = {
+            "places": [],
+            "transitions": [],
+            "arcs": []
+        }
         self._classpath: Optional[str] = None
         
     def start(self) -> None:
@@ -227,7 +370,101 @@ class SirioMCPMock(BaseMCPClient):
         logger.info(f"Mock MCP Tool call: {name} with args: {arguments}")
         
         try:
-            if name == "create_petri_net":
+            # 1. New Real Tools (Server Aligned)
+            if name == "create":
+                self.active_net = {
+                    "places": [],
+                    "transitions": [],
+                    "arcs": []
+                }
+                return {"status": "Done"}
+                
+            elif name == "add_places":
+                names = arguments.get("node_names", [])
+                for p_name in names:
+                    if not any(p["name"] == p_name for p in self.active_net["places"]):
+                        self.active_net["places"].append({
+                            "name": p_name,
+                            "tokens": 0
+                        })
+                return {"status": "Done"}
+                
+            elif name == "add_tokens":
+                p_name = arguments.get("name")
+                num = arguments.get("num", 0)
+                for p in self.active_net["places"]:
+                    if p["name"] == p_name:
+                        p["tokens"] += num
+                        break
+                return {"status": "Done"}
+                
+            elif name == "add_transitions":
+                names = arguments.get("transition_names", [])
+                for t_name in names:
+                    if not any(t["name"] == t_name for t in self.active_net["transitions"]):
+                        self.active_net["transitions"].append({
+                            "name": t_name,
+                            "type": "exponential",
+                            "rate": 1.0
+                        })
+                return {"status": "Done"}
+                
+            elif name == "add_precondition":
+                p_name = arguments.get("place_name")
+                t_name = arguments.get("transition_name")
+                self.active_net["arcs"].append({
+                    "from": p_name,
+                    "to": t_name,
+                    "type": "precondition"
+                })
+                return {"status": "Done"}
+                
+            elif name == "add_postcondition":
+                p_name = arguments.get("place_name")
+                t_name = arguments.get("transition_name")
+                self.active_net["arcs"].append({
+                    "from": t_name,
+                    "to": p_name,
+                    "type": "postcondition"
+                })
+                return {"status": "Done"}
+                
+            elif name == "add_EXP":
+                t_name = arguments.get("transition_name")
+                rate = arguments.get("rate", 1.0)
+                for t in self.active_net["transitions"]:
+                    if t["name"] == t_name:
+                        t["type"] = "exponential"
+                        t["rate"] = rate
+                        break
+                return {"status": "Done"}
+                
+            elif name == "execute_steady_state_analysis":
+                res = {}
+                found = False
+                for p in self.active_net["places"]:
+                    if "fail" in p["name"].lower() or "event" in p["name"].lower() or "p1" in p["name"].lower():
+                        res[f"{p['name']} "] = 1.0
+                        found = True
+                        break
+                if not found and self.active_net["places"]:
+                    res[f"{self.active_net['places'][-1]['name']} "] = 1.0
+                else:
+                    res["P1 "] = 1.0
+                return res
+                
+            elif name == "execute_transient_analysis":
+                pts = arguments.get("timePoints", [0.0, 100.0])
+                res = {}
+                for pt in pts:
+                    if pt == pts[0]:
+                        res[str(pt)] = {"P0 ": 1.0}
+                    else:
+                        res[str(pt)] = {"P1 ": 1.0}
+                return res
+
+            # 2. Old Mock Tools (Backward Compatibility)
+            elif name == "create_petri_net":
                 net_id = str(uuid.uuid4())
                 self.nets[net_id] = {
                     "places": [],

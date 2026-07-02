@@ -40,7 +40,9 @@ USER_PROMPT_TEMPLATE = (
     "  * error limit: {error}\n"
     "- Leaf component model parameters (rates are exponential):\n"
     "{components_details}\n\n"
-    "Provide your final result in a markdown code block containing a JSON object in this exact format:\n"
+    "You are encouraged to first show your reasoning, explain your chain of thoughts, "
+    "or document your analysis steps. After your explanation, you MUST provide your final "
+    "result in a markdown code block containing a JSON object in this exact format:\n"
     "```json\n"
     "{{\n"
     "  \"steadyState\": <steady_state_probability_double>,\n"
@@ -52,7 +54,7 @@ USER_PROMPT_TEMPLATE = (
     "  ]\n"
     "}}\n"
     "```\n"
-    "Do not put comments or explanations inside the json code block."
+    "Ensure the JSON is well-formed and do not put comments or explanations inside the json code block."
 )
 
 def build_components_details(components: Dict[str, Any]) -> str:
@@ -128,6 +130,7 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, p
     # Initialize history
     history = [{"role": "user", "parts": [{"text": prompt}]}]
     tool_calls_log = []
+    full_text = ""
     
     # Limit loop steps to prevent infinite loops
     for _ in range(30):
@@ -154,7 +157,23 @@ def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, p
         if not function_calls:
             # Model returned final answer
             text = "".join([p.get("text", "") for p in parts if "text" in p])
-            return text, tool_calls_log
+            full_text += text
+            
+            # Check if JSON is incomplete (starts with ```json but does not have valid parsed JSON)
+            if "```json" in full_text and not parse_json_from_response(full_text):
+                # Add model's assistant turn to history
+                history.append({
+                    "role": "model",
+                    "parts": parts
+                })
+                # Add instruction to continue
+                history.append({
+                    "role": "user",
+                    "parts": [{"text": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."}]
+                })
+                continue
+                
+            return full_text, tool_calls_log
             
         # Add model's assistant turn to history
         history.append({
@@ -260,6 +279,7 @@ def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mcp_client: BaseMC
         {"role": "user", "content": prompt}
     ]
     tool_calls_log = []
+    full_text = ""
     
     mcp_tools = mcp_client.list_tools()
     
@@ -287,7 +307,16 @@ def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mcp_client: BaseMC
         messages.append(msg)
         
         if not tool_calls:
-            return msg.get("content", ""), tool_calls_log
+            text = msg.get("content", "") or ""
+            full_text += text
+            
+            # Check if JSON is incomplete (starts with ```json but does not have valid parsed JSON)
+            if "```json" in full_text and not parse_json_from_response(full_text):
+                # Request continuation
+                messages.append({"role": "user", "content": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."})
+                continue
+                
+            return full_text, tool_calls_log
             
         for tc in tool_calls:
             name = tc["function"]["name"]
@@ -378,8 +407,69 @@ def run_evaluation_for_mode(
                 else:
                     raw_text, tool_calls = execute_agent_loop_openai(driver, mcp_client, prompt)
             else:
-                # Without MCP direct prompt
-                raw_text = driver.generate(prompt, SYSTEM_INSTRUCTION)
+                # Without MCP direct prompt with continuation support
+                if provider == "gemini":
+                    headers = {"Content-Type": "application/json"}
+                    history = [{"role": "user", "parts": [{"text": prompt}]}]
+                    raw_text = ""
+                    for turn in range(5):
+                        payload = {
+                            "contents": history,
+                            "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
+                            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 8192}
+                        }
+                        response = requests.post(driver.url, headers=headers, json=payload)
+                        response.raise_for_status()
+                        response_json = response.json()
+                        candidates = response_json.get("candidates", [])
+                        if not candidates:
+                            break
+                        content = candidates[0].get("content", {})
+                        parts = content.get("parts", [])
+                        text = "".join([p.get("text", "") for p in parts if "text" in p])
+                        raw_text += text
+                        
+                        if "```json" in raw_text and parse_json_from_response(raw_text):
+                            break
+                            
+                        # If incomplete, append turns to history and continue
+                        history.append({"role": "model", "parts": parts})
+                        history.append({"role": "user", "parts": [{"text": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."}]})
+                elif provider == "openai":
+                    headers = {
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {driver.api_key}"
+                    }
+                    messages = [
+                        {"role": "system", "content": SYSTEM_INSTRUCTION},
+                        {"role": "user", "content": prompt}
+                    ]
+                    raw_text = ""
+                    for turn in range(5):
+                        payload = {
+                            "model": driver.model_name,
+                            "messages": messages,
+                            "temperature": 0.0,
+                            "max_tokens": 4096
+                        }
+                        response = requests.post(driver.url, headers=headers, json=payload)
+                        response.raise_for_status()
+                        response_json = response.json()
+                        choices = response_json.get("choices", [])
+                        if not choices:
+                            break
+                        msg = choices[0].get("message", {})
+                        text = msg.get("content", "") or ""
+                        raw_text += text
+                        
+                        if "```json" in raw_text and parse_json_from_response(raw_text):
+                            break
+                            
+                        messages.append(msg)
+                        messages.append({"role": "user", "content": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."})
+                else:
+                    # Mock driver fallback
+                    raw_text = driver.generate(prompt, SYSTEM_INSTRUCTION)
                 
             if verbose_interactions:
                 logger.info(f"\n==================== [VERBOSE] Prompt Sent to LLM (MCP={with_mcp}, Sample={i}) ====================\n{prompt}\n========================================================================================\n")
