@@ -30,9 +30,10 @@ class GeminiDriver(LLMDriver):
     Driver for Google Gemini API via HTTP POST.
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash", temperature: float = 0.0):
         self.api_key = api_key
         self.model_name = model_name
+        self.temperature = temperature
         self.url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
 
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
@@ -53,7 +54,7 @@ class GeminiDriver(LLMDriver):
             
         # Standard configuration for deterministic outputs in benchmarking
         payload["generationConfig"] = {
-            "temperature": 0.0,
+            "temperature": self.temperature,
             "maxOutputTokens": 8192
         }
 
@@ -79,10 +80,11 @@ class OpenAICompatibleDriver(LLMDriver):
     Driver for OpenAI-compatible local or remote APIs (e.g. Ollama, vLLM, LM Studio).
     """
     
-    def __init__(self, base_url: str, model_name: str, api_key: str = "local"):
+    def __init__(self, base_url: str, model_name: str, api_key: str = "local", temperature: float = 0.0):
         self.base_url = base_url.rstrip('/')
         self.model_name = model_name
         self.api_key = api_key
+        self.temperature = temperature
         self.url = f"{self.base_url}/chat/completions"
 
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
@@ -100,7 +102,7 @@ class OpenAICompatibleDriver(LLMDriver):
         payload = {
             "model": self.model_name,
             "messages": messages,
-            "temperature": 0.0,
+            "temperature": self.temperature,
             "max_tokens": 4096
         }
 

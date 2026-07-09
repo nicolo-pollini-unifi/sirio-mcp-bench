@@ -7,6 +7,7 @@ import logging
 import tempfile
 import subprocess
 import traceback
+import requests
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict, Any, List, Tuple, Optional
@@ -19,6 +20,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 from llm_client import GeminiDriver, OpenAICompatibleDriver, LLMDriver, MockLLMDriver
+from llm_adapters import GeminiAdapter, OpenAIAdapter
 from mcp_client import BaseMCPClient, SirioMCPMock, SirioMCPRealClient
 from metrics import compute_steady_state_error, compute_curve_metrics, is_solution_correct, compute_pass_at_k
 
@@ -105,119 +107,6 @@ def run_java_baseline(workspace_path: str, case_json_path: str, case_id: str) ->
             os.unlink(temp_out.name)
         except OSError:
             pass
-
-def execute_agent_loop_gemini(driver: GeminiDriver, mcp_client: BaseMCPClient, prompt: str) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """
-    Executes the Gemini API conversation loop, routing tool calls to the MCP client.
-    """
-    headers = {"Content-Type": "application/json"}
-    
-    # Convert schemas to Gemini declarations format dynamically
-    declarations = []
-    mcp_tools = mcp_client.list_tools()
-    for tool in mcp_tools:
-        func = tool["function"]
-        declarations.append({
-            "name": func["name"],
-            "description": func["description"],
-            "parameters": {
-                "type": "OBJECT",
-                "properties": func["parameters"].get("properties", {}),
-                "required": func["parameters"].get("required", [])
-            }
-        })
-    tools = [{"functionDeclarations": declarations}]
-    
-    # Initialize history
-    history = [{"role": "user", "parts": [{"text": prompt}]}]
-    tool_calls_log = []
-    interactions_trace = []
-    full_text = ""
-    
-    # Limit loop steps to prevent infinite loops (using 100 turns to avoid timeouts for long sequences)
-    for _ in range(100):
-        payload = {
-            "contents": history,
-            "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
-            "tools": tools,
-            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 8192}
-        }
-        
-        response = requests.post(driver.url, headers=headers, json=payload)
-        response.raise_for_status()
-        response_json = response.json()
-        
-        candidates = response_json.get("candidates", [])
-        if not candidates:
-            raise ValueError(f"No response candidates returned: {response_json}")
-            
-        content = candidates[0].get("content", {})
-        parts = content.get("parts", [])
-        
-        # Check for text in parts and document it in the trace
-        text_parts = [p.get("text", "") for p in parts if "text" in p]
-        if text_parts:
-            text_content = "".join(text_parts).strip()
-            if text_content:
-                interactions_trace.append({"type": "text", "content": text_content})
-        
-        # Check if model requested a tool call
-        function_calls = [p.get("functionCall") for p in parts if "functionCall" in p]
-        if not function_calls:
-            # Model returned final answer
-            text = "".join([p.get("text", "") for p in parts if "text" in p])
-            full_text += text
-            
-            # Check if JSON is incomplete (starts with ```json but does not have valid parsed JSON)
-            if "```json" in full_text and not parse_json_from_response(full_text):
-                # Add model's assistant turn to history
-                history.append({
-                    "role": "model",
-                    "parts": parts
-                })
-                # Add instruction to continue
-                history.append({
-                    "role": "user",
-                    "parts": [{"text": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."}]
-                })
-                continue
-                
-            return full_text, tool_calls_log, interactions_trace
-            
-        # Add model's assistant turn to history
-        history.append({
-            "role": "model",
-            "parts": parts
-        })
-        
-        # Execute tool calls and gather responses
-        response_parts = []
-        for fc in function_calls:
-            name = fc["name"]
-            args = fc.get("args", {})
-            result = mcp_client.handle_tool_call(name, args)
-            tool_calls_log.append({"tool": name, "args": args, "result": result})
-            interactions_trace.append({
-                "type": "tool_call",
-                "name": name,
-                "args": args,
-                "result": result
-            })
-            
-            response_parts.append({
-                "functionResponse": {
-                    "name": name,
-                    "response": {"result": result}
-                }
-            })
-            
-        # Add tool responses to history
-        history.append({
-            "role": "user",
-            "parts": response_parts
-        })
-        
-    raise TimeoutError("LLM exceeded max tool call iteration limit")
 
 def execute_agent_loop_mock(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str, baseline: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
@@ -330,93 +219,62 @@ def execute_agent_loop_mock(driver: LLMDriver, mcp_client: BaseMCPClient, prompt
     interactions_trace.append({"type": "text", "content": reasoning})
     return reasoning, tool_calls_log, interactions_trace
 
-import requests # imported for the execute loops
 
-def execute_agent_loop_openai(driver: OpenAICompatibleDriver, mcp_client: BaseMCPClient, prompt: str) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
+# TODO aggiungere reasoning impostabile da CLI
+def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str, max_turns: int = 100) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
-    Executes the OpenAI-compatible local API loop, routing tool calls to the MCP server.
+    Unico entry point del loop agente. Seleziona l'adapter corretto in base
+    al tipo di driver ricevuto e delega ad esso tutte le specificità del
+    formato API, mentre l'algoritmo del loop (richiesta, parsing, tool calls,
+    gestione troncamenti, timeout) resta condiviso e scritto una sola volta.
     """
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {driver.api_key}"
-    }
-    
-    messages = [
-        {"role": "system", "content": SYSTEM_INSTRUCTION},
-        {"role": "user", "content": prompt}
-    ]
-    tool_calls_log = []
-    interactions_trace = []
-    full_text = ""
-    
     mcp_tools = mcp_client.list_tools()
-    
-    # Limit loop steps to prevent infinite loops (using 100 turns to avoid timeouts for long sequences)
-    for _ in range(100):
-        payload = {
-            "model": driver.model_name,
-            "messages": messages,
-            "tools": mcp_tools,
-            "temperature": 0.0,
-            "max_tokens": 8192
-        }
-        
-        response = requests.post(driver.url, headers=headers, json=payload)
+
+    if isinstance(driver, GeminiDriver):
+        adapter = GeminiAdapter(driver, mcp_tools, SYSTEM_INSTRUCTION)
+    elif isinstance(driver, OpenAICompatibleDriver):
+        adapter = OpenAIAdapter(driver, mcp_tools, SYSTEM_INSTRUCTION)
+    else:
+        raise ValueError(f"Unsupported driver type for execute_agent_loop: {type(driver).__name__}")
+
+    adapter.init_conversation(prompt)
+
+    tool_calls_log: List[Dict[str, Any]] = []
+    interactions_trace: List[Dict[str, Any]] = []
+    full_text = ""
+
+    for _ in range(max_turns):
+        url, headers, payload = adapter.build_request()
+        response = requests.post(url, headers=headers, json=payload)
         response.raise_for_status()
         response_json = response.json()
-        
-        choices = response_json.get("choices", [])
-        if not choices:
-            raise ValueError(f"No response choices returned: {response_json}")
-            
-        msg = choices[0].get("message", {})
-        text_content = msg.get("content", "")
-        if text_content:
-            interactions_trace.append({"type": "text", "content": text_content.strip()})
-            
-        tool_calls = msg.get("tool_calls", [])
-        
-        # Append message to list
-        messages.append(msg)
-        
-        if not tool_calls:
-            text = msg.get("content", "") or ""
+
+        text, calls, raw_native_content = adapter.parse_response(response_json)
+
+        if text:
+            interactions_trace.append({"type": "text", "content": text})
+
+        if not calls:
             full_text += text
-            
-            # Check if JSON is incomplete (starts with ```json but does not have valid parsed JSON)
+
             if "```json" in full_text and not parse_json_from_response(full_text):
-                # Request continuation
-                messages.append({"role": "user", "content": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."})
+                adapter.append_assistant_turn(raw_native_content)
+                adapter.append_continuation_request()
                 continue
-                
+
             return full_text, tool_calls_log, interactions_trace
-            
-        for tc in tool_calls:
-            name = tc["function"]["name"]
-            args_str = tc["function"]["arguments"]
-            tc_id = tc["id"]
-            
-            try:
-                args = json.loads(args_str)
-            except Exception:
-                args = {}
-                
-            result = mcp_client.handle_tool_call(name, args)
-            tool_calls_log.append({"tool": name, "args": args, "result": result})
-            interactions_trace.append({
-                "type": "tool_call",
-                "name": name,
-                "args": args,
-                "result": result
-            })
-            
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tc_id,
-                "name": name,
-                "content": json.dumps(result)
-            })
-            
+
+        adapter.append_assistant_turn(raw_native_content)
+
+        calls_with_results = []
+        for call in calls:
+            result = mcp_client.handle_tool_call(call["name"], call["args"])
+            tool_calls_log.append({"tool": call["name"], "args": call["args"], "result": result})
+            interactions_trace.append({"type": "tool_call", "name": call["name"], "args": call["args"], "result": result})
+            calls_with_results.append({**call, "result": result})
+
+        adapter.append_tool_results(calls_with_results)
+
     raise TimeoutError("LLM exceeded max tool call iteration limit")
 
 def parse_json_from_response(text: str) -> Optional[Dict[str, Any]]:
@@ -453,7 +311,8 @@ def run_evaluation_for_mode(
     with_mcp: bool,
     provider: str,
     num_samples: int,
-    verbose_interactions: bool = False
+    verbose_interactions: bool = False,
+    max_turns: int = 100
 ) -> Tuple[List[Dict[str, Any]], float, float]:
     """
     Runs the evaluation for a single mode (with or without MCP), possibly multiple times
@@ -480,12 +339,10 @@ def run_evaluation_for_mode(
                 
             if with_mcp:
                 # With MCP loop
-                if provider == "gemini":
-                    raw_text, tool_calls, interactions_trace = execute_agent_loop_gemini(driver, mcp_client, prompt)
-                elif provider == "mock":
+                if provider == "mock":
                     raw_text, tool_calls, interactions_trace = execute_agent_loop_mock(driver, mcp_client, prompt, baseline)
                 else:
-                    raw_text, tool_calls, interactions_trace = execute_agent_loop_openai(driver, mcp_client, prompt)
+                    raw_text, tool_calls, interactions_trace = execute_agent_loop(driver, mcp_client, prompt, max_turns)
             else:
                 # Without MCP direct prompt with continuation support
                 if provider == "gemini":
@@ -496,7 +353,7 @@ def run_evaluation_for_mode(
                         payload = {
                             "contents": history,
                             "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
-                            "generationConfig": {"temperature": 0.0, "maxOutputTokens": 8192}
+                            "generationConfig": {"temperature": driver.temperature, "maxOutputTokens": 8192}
                         }
                         response = requests.post(driver.url, headers=headers, json=payload)
                         response.raise_for_status()
@@ -530,7 +387,7 @@ def run_evaluation_for_mode(
                         payload = {
                             "model": driver.model_name,
                             "messages": messages,
-                            "temperature": 0.0,
+                            "temperature": driver.temperature,
                             "max_tokens": 8192
                         }
                         response = requests.post(driver.url, headers=headers, json=payload)
@@ -654,6 +511,8 @@ def main():
     parser.add_argument("--mcp-mode", default="mock", choices=["mock", "stdio", "sse"], help="MCP server connection mode")
     parser.add_argument("--sse-url", default="http://localhost:8081/sse", help="MCP server SSE URL (when mcp-mode is sse)")
     parser.add_argument("--verbose-interactions", action="store_true", help="Print detailed LLM prompts, responses, and tool calls to console during execution")
+    parser.add_argument("--temperature", type=float, default=0.0, help="Temperature for LLM generation")
+    parser.add_argument("--max-agentic-turn", type=int, default=100, help="Maximum number of turns for the agent loop")
     
     args = parser.parse_args()
     
@@ -669,11 +528,11 @@ def main():
         if not args.api_key:
             logger.error("Missing Gemini API Key. Use --api-key or GEMINI_API_KEY env var.")
             sys.exit(1)
-        driver = GeminiDriver(api_key=args.api_key, model_name=args.model)
+        driver = GeminiDriver(api_key=args.api_key, model_name=args.model, temperature=args.temperature)
     elif args.provider == "mock":
-        driver = MockLLMDriver()
+        driver = MockLLMDriver(temperature=args.temperature)
     else:
-        driver = OpenAICompatibleDriver(base_url=args.openai_url, model_name=args.openai_model, api_key=args.openai_key)
+        driver = OpenAICompatibleDriver(base_url=args.openai_url, model_name=args.openai_model, api_key=args.openai_key, temperature=args.temperature)
         
     # Build classpath for stdio/sse real client
     classpath = ""
@@ -753,7 +612,8 @@ def main():
                 with_mcp=False,
                 provider=args.provider,
                 num_samples=args.samples,
-                verbose_interactions=args.verbose_interactions
+                verbose_interactions=args.verbose_interactions,
+                max_turns=args.max_agentic_turn
             )
             no_mcp_pass_k = compute_pass_at_k(args.samples, no_mcp_correct_count, args.k)
             
@@ -778,7 +638,8 @@ def main():
                 with_mcp=True,
                 provider=args.provider,
                 num_samples=args.samples,
-                verbose_interactions=args.verbose_interactions
+                verbose_interactions=args.verbose_interactions,
+                max_turns=args.max_agentic_turn
             )
             mcp_pass_k = compute_pass_at_k(args.samples, mcp_correct_count, args.k)
             
