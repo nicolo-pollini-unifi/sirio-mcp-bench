@@ -12,6 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from typing import Dict, Any, List, Tuple, Optional
 from dotenv import load_dotenv
+from pathlib import Path
 
 load_dotenv()
 
@@ -221,6 +222,7 @@ def execute_agent_loop_mock(driver: LLMDriver, mcp_client: BaseMCPClient, prompt
 
 
 # TODO aggiungere reasoning impostabile da CLI
+# TODO vogliamo aggiungere una gestione del caso context length exceeded?
 def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str, max_turns: int = 100) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Unico entry point del loop agente. Seleziona l'adapter corretto in base
@@ -243,37 +245,96 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
     interactions_trace: List[Dict[str, Any]] = []
     full_text = ""
 
-    for _ in range(max_turns):
-        url, headers, payload = adapter.build_request()
-        response = requests.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        response_json = response.json()
+    for turn in range(max_turns):
 
-        text, calls, raw_native_content = adapter.parse_response(response_json)
+        logger.info("\n\n================================= AGENT TURN %d/%d =================================", turn + 1, max_turns)
 
-        if text:
-            interactions_trace.append({"type": "text", "content": text})
+        if turn == 0:
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            msg_path = "output\messages"
+            msg_path = os.path.join(msg_path + f"\{timestamp}")
+            if not os.path.exists(msg_path):
+                os.makedirs(msg_path)
 
-        if not calls:
-            full_text += text
+        out_path = Path(msg_path) / f"Turn{turn+1}.md"
 
-            if "```json" in full_text and not parse_json_from_response(full_text):
-                adapter.append_assistant_turn(raw_native_content)
-                adapter.append_continuation_request()
-                continue
-
-            return full_text, tool_calls_log, interactions_trace
-
-        adapter.append_assistant_turn(raw_native_content)
-
+        response_json = None
+        text = ""
+        calls = []
+        raw_native_content = {}
         calls_with_results = []
-        for call in calls:
-            result = mcp_client.handle_tool_call(call["name"], call["args"])
-            tool_calls_log.append({"tool": call["name"], "args": call["args"], "result": result})
-            interactions_trace.append({"type": "tool_call", "name": call["name"], "args": call["args"], "result": result})
-            calls_with_results.append({**call, "result": result})
+        error_msg = None
 
-        adapter.append_tool_results(calls_with_results)
+        try:
+            url, headers, payload = adapter.build_request()
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            response_json = response.json()
+
+            text, calls, raw_native_content = adapter.parse_response(response_json)
+            
+            if text:
+                interactions_trace.append({"type": "text", "content": text})
+
+            if not calls:
+                full_text += text
+
+                if "```json" in full_text and not parse_json_from_response(full_text):
+                    adapter.append_assistant_turn(raw_native_content)
+                    adapter.append_continuation_request()
+                    continue
+
+                return full_text, tool_calls_log, interactions_trace
+
+            adapter.append_assistant_turn(raw_native_content)
+
+            for call in calls:
+                result = mcp_client.handle_tool_call(call["name"], call["args"])
+                tool_calls_log.append({"tool": call["name"], "args": call["args"], "result": result})
+                interactions_trace.append({"type": "tool_call", "name": call["name"], "args": call["args"], "result": result})
+                calls_with_results.append({**call, "result": result})
+
+            adapter.append_tool_results(calls_with_results)
+
+        except Exception as e:
+            error_msg = f"{type(e).__name__}: {e}"
+            logger.exception("Error in turn %d", turn + 1)
+            raise
+
+        finally:
+            try:
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(f"# Turn {turn+1}\n\n")
+
+                    if error_msg:
+                        f.write(f"Error: `{error_msg}`\n\n")
+
+                    f.write("## Content\n\n")
+                    f.write(raw_native_content.get("content", "_empty_"))
+                    f.write("\n\n")
+
+                    f.write("## Reasoning\n\n")
+                    f.write(raw_native_content.get("reasoning_content", "_empty_"))
+                    f.write("\n\n")
+
+                    f.write("## Tool Calls\n\n")
+                    if calls_with_results:
+                        for i, call in enumerate(calls_with_results, 1):
+                            f.write(f"### Tool Call {i}\n")
+                            f.write(f"- Name: `{call.get('name', '_unknown_')}`\n")
+                            f.write(f"- Args: `{call.get('args', '')}`\n")
+                            f.write(f"- Result: `{call.get('result', '')}`\n\n")
+                    elif calls:
+                        for i, call in enumerate(calls, 1):
+                            f.write(f"### Tool Call {i}\n")
+                            f.write(f"- Name: `{call.get('name', '_unknown_')}`\n")
+                            f.write(f"- Args: `{call.get('args', '')}`\n")
+                            f.write("- Result: `_not executed_`\n\n")
+                    else:
+                        f.write("_No tool calls_\n\n")
+            except Exception:
+                logger.exception("Could not save dump of turn %d", turn + 1)
 
     raise TimeoutError("LLM exceeded max tool call iteration limit")
 
@@ -355,7 +416,7 @@ def run_evaluation_for_mode(
                             "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
                             "generationConfig": {"temperature": driver.temperature, "maxOutputTokens": 8192}
                         }
-                        response = requests.post(driver.url, headers=headers, json=payload)
+                        response = requests.post(driver.url, headers=headers, json=payload, timeout=600)
                         response.raise_for_status()
                         response_json = response.json()
                         candidates = response_json.get("candidates", [])
@@ -390,7 +451,7 @@ def run_evaluation_for_mode(
                             "temperature": driver.temperature,
                             "max_tokens": 8192
                         }
-                        response = requests.post(driver.url, headers=headers, json=payload)
+                        response = requests.post(driver.url, headers=headers, json=payload, timeout=600)
                         response.raise_for_status()
                         response_json = response.json()
                         choices = response_json.get("choices", [])
