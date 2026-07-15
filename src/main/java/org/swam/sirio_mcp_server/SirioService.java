@@ -219,7 +219,7 @@ public class SirioService {
 
     @Tool(name = "add_enabling_function", description = "Add an enabling function to a transition. Removes pre-existing enabling functions.")
     public void addEnablingFunction(
-            @ToolParam(description = "Condition of the enabling function, boolean expression as String (ex. 'place_name == 1')") String condition,
+            @ToolParam(description = "Condition of the enabling function, boolean expression as String (ex. 'place_name == 1'). Use && for AND logic operators and || for OR logic operators") String condition,
             @ToolParam(description = "Transition to apply the enabling function to") String transition_name) {
         PetriNetUtils.checkNetAndMarking(petriNet, marking);
         Transition target = PetriNetUtils.findTransitionByName(petriNet, transition_name);
@@ -319,7 +319,7 @@ public class SirioService {
         for (Field field : fields) {
             try {
                 // TODO va trovato un modo per accedere al campo 'domain' in modo da vedere eft e lft
-                // field.setAccessible(true); // HACK "Scassina" i campi privati
+                field.setAccessible(true); // HACK "Scassina" i campi privati
 
                 // Saltiamo i campi statici o costanti inutili
                 if (Modifier.isStatic(field.getModifiers())) {
@@ -330,7 +330,7 @@ public class SirioService {
                 Object value = field.get(obj);
 
                 output.append(prefix).append(name).append(": ").append(value).append("\n");
-
+                field.setAccessible(false);
             } catch (Exception e) {
                 // Ignora errori di accesso
             }
