@@ -217,13 +217,14 @@ public class SirioService {
         marking.removeTokens(p, num);
     }
 
-    @Tool(name = "add_enabling_function", description = "Add an enabling function to a transition")
+    @Tool(name = "add_enabling_function", description = "Add an enabling function to a transition. Removes pre-existing enabling functions.")
     public void addEnablingFunction(
             @ToolParam(description = "Condition of the enabling function, boolean expression as String (ex. 'place_name == 1')") String condition,
             @ToolParam(description = "Transition to apply the enabling function to") String transition_name) {
         PetriNetUtils.checkNetAndMarking(petriNet, marking);
         Transition target = PetriNetUtils.findTransitionByName(petriNet, transition_name);
 
+        target.removeFeature(EnablingFunction.class);
         target.addFeature(new EnablingFunction(condition));
     }
 
