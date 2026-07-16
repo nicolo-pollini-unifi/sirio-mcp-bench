@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from typing import Dict, Any, List, Tuple, Optional
 from dotenv import load_dotenv
 from pathlib import Path
+from difflib import SequenceMatcher
 
 load_dotenv()
 
@@ -24,6 +25,26 @@ from llm_client import GeminiDriver, OpenAICompatibleDriver, LLMDriver, MockLLMD
 from llm_adapters import GeminiAdapter, OpenAIAdapter
 from mcp_client import BaseMCPClient, SirioMCPMock, SirioMCPRealClient
 from metrics import compute_steady_state_error, compute_curve_metrics, is_solution_correct, compute_pass_at_k
+
+class AgentLoopError(Exception):
+    """Base exception per tutti i fallimenti del loop agentico."""
+    pass
+
+class SemanticLoopError(AgentLoopError):
+    """Il modello ripete reasoning o tool call quasi identici senza progresso."""
+    pass
+
+class MaxTurnsExceededError(AgentLoopError):
+    """Limite massimo di turni raggiunto senza output valido."""
+    pass
+
+class ToolCallBudgetExceededError(AgentLoopError):
+    """Numero totale di tool call ha superato il budget consentito."""
+    pass
+
+class NetworkError(AgentLoopError):
+    """Errore di rete/timeout durante la chiamata all'endpoint LLM."""
+    pass
 
 SYSTEM_INSTRUCTION = (
     "You are a reliability engineering expert assistant. Your task is to perform a quantitative unreliability analysis "
@@ -245,6 +266,11 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
     interactions_trace: List[Dict[str, Any]] = []
     full_text = ""
 
+    REPETITION_THRESHOLD = 0.85
+    MAX_CONSECUTIVE_REPEATS = 3
+    MAX_RECOVERY_ATTEMPTS = 1
+    recent_texts = []
+
     for turn in range(max_turns):
 
         logger.info("\n\n================================= AGENT TURN %d/%d =================================", turn + 1, max_turns)
@@ -267,15 +293,38 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
         error_msg = None
 
         try:
-            url, headers, payload = adapter.build_request()
-            response = requests.post(url, headers=headers, json=payload)
-            response.raise_for_status()
+            try:
+                url, headers, payload = adapter.build_request()
+                response = requests.post(url, headers=headers, json=payload, timeout=600)
+                response.raise_for_status()
+            except requests.exceptions.RequestException as e:
+                raise NetworkError(f"HTTP request failed at turn {turn+1}: {e}") from e
+            
             response_json = response.json()
-
             text, calls, raw_native_content = adapter.parse_response(response_json)
             
             if text:
                 interactions_trace.append({"type": "text", "content": text})
+                if recent_texts:
+                    similarity = SequenceMatcher(None, text, recent_texts[-1]).ratio()
+                    if similarity > REPETITION_THRESHOLD:
+                        repeat_streak = getattr(locals(), "repeat_streak", 0) + 1
+                    else:
+                        repeat_streak = 0
+                    if repeat_streak >= MAX_CONSECUTIVE_REPEATS:
+                        if recovery_attempts < MAX_RECOVERY_ATTEMPTS:
+                            recovery_attempts += 1
+                            adapter.append_assistant_turn(raw_native_content)
+                            adapter.append_continuation_request(
+                                "Stop reasoning. Call a tool now using your best current plan."
+                            )
+                            repeat_streak = 0
+                            continue
+                        else:
+                            raise SemanticLoopError(
+                                f"Semantic loop persisted after {recovery_attempts} recovery attempts"
+                            )
+                recent_texts.append(text)
 
             if not calls:
                 full_text += text
@@ -336,7 +385,7 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
             except Exception:
                 logger.exception("Could not save dump of turn %d", turn + 1)
 
-    raise TimeoutError("LLM exceeded max tool call iteration limit")
+    raise MaxTurnsExceededError("LLM exceeded max tool call iteration limit")
 
 def parse_json_from_response(text: str) -> Optional[Dict[str, Any]]:
     """
@@ -486,7 +535,7 @@ def run_evaluation_for_mode(
             else:
                 error_msg = "Output JSON format was invalid or fields are missing."
         except Exception as e:
-            error_msg = str(e) or repr(e)
+            error_msg = f"{type(e).__name__}: {e}"
             logger.error(f"Error executing run: {e}")
             
         latency = time.time() - start_time
@@ -514,7 +563,8 @@ def run_evaluation_for_mode(
             "transient_result": transient_result,
             "correct": correct,
             "latency_seconds": latency,
-            "error": error_msg
+            "error": error_msg,
+            "error_type": type(e).__name__ if 'e' in dir() else None
         })
         
     executable_rate = float(sum(1 for s in samples if s["success"])) / num_samples
