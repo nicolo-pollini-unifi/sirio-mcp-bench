@@ -298,7 +298,8 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
                 response = requests.post(url, headers=headers, json=payload, timeout=600)
                 response.raise_for_status()
             except requests.exceptions.RequestException as e:
-                raise NetworkError(f"HTTP request failed at turn {turn+1}: {e}") from e
+                body = getattr(e.response, "text", "")[:1000] if getattr(e, "response", None) else ""
+                raise NetworkError(f"HTTP request failed at turn {turn+1}: {e} | Response body: {body}") from e
             
             response_json = response.json()
             text, calls, raw_native_content = adapter.parse_response(response_json)
@@ -624,6 +625,21 @@ def main():
     parser.add_argument("--verbose-interactions", action="store_true", help="Print detailed LLM prompts, responses, and tool calls to console during execution")
     parser.add_argument("--temperature", type=float, default=0.0, help="Temperature for LLM generation")
     parser.add_argument("--max-agentic-turn", type=int, default=100, help="Maximum number of turns for the agent loop")
+    parser.add_argument("--reasoning-effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
+    parser.add_argument(
+        "--enable-thinking",
+        dest="thinking",
+        action="store_true",
+        help="Enable thinking in chat_template_kwargs for OpenAI-compatible requests"
+    )
+    parser.add_argument(
+        "--disable-thinking",
+        dest="thinking",
+        action="store_false",
+        help="Disable thinking in chat_template_kwargs for OpenAI-compatible requests"
+    )
+    parser.set_defaults(thinking=True)
+    # TODO add reasoning effort, cfr. https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/#model
     
     args = parser.parse_args()
     
@@ -643,7 +659,7 @@ def main():
     elif args.provider == "mock":
         driver = MockLLMDriver(temperature=args.temperature)
     else:
-        driver = OpenAICompatibleDriver(base_url=args.openai_url, model_name=args.openai_model, api_key=args.openai_key, temperature=args.temperature)
+        driver = OpenAICompatibleDriver(base_url=args.openai_url, model_name=args.openai_model, api_key=args.openai_key, temperature=args.temperature, reasoning=args.reasoning_effort, enable_thinking=args.thinking)
         
     # Build classpath for stdio/sse real client
     classpath = ""

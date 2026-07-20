@@ -109,7 +109,12 @@ class OpenAIAdapter:
             "messages": self.messages,
             "tools": self.tools,
             "temperature": self.driver.temperature,
-            "max_tokens": 8192
+            "max_tokens": 8192,
+            "reasoning_effort": self.driver.reasoning,
+            "thinking_budget_tokens": self.driver.reasoning_budget,
+            "chat_template_kwargs": {
+                "enable_thinking": self.driver.enable_thinking
+            }
         }
         return self.driver.url, self.headers, payload
 

@@ -30,10 +30,11 @@ class GeminiDriver(LLMDriver):
     Driver for Google Gemini API via HTTP POST.
     """
     
-    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash", temperature: float = 0.0):
+    def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash", temperature: float = 0.0, timeout: float = 600):
         self.api_key = api_key
         self.model_name = model_name
         self.temperature = temperature
+        self.timeout = timeout
         self.url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
 
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
@@ -59,7 +60,7 @@ class GeminiDriver(LLMDriver):
         }
 
         try:
-            response = requests.post(self.url, headers=headers, json=payload)
+            response = requests.post(self.url, headers=headers, json=payload, timeout = self.timeout)
             response.raise_for_status()
             response_json = response.json()
             
@@ -75,16 +76,37 @@ class GeminiDriver(LLMDriver):
             logger.error(f"Error calling Gemini API: {e}")
             raise e
 
+REASONING_EFFORT_TOKEN_BUDGETS = {
+    "low": 512,
+    "medium": 2048,
+    "high": 4096,
+    "xhigh": 8192,
+    "max": -1,  # -1 = nessun limite (thinking libero)
+}
+
 class OpenAICompatibleDriver(LLMDriver):
     """
     Driver for OpenAI-compatible local or remote APIs (e.g. Ollama, vLLM, LM Studio).
     """
     
-    def __init__(self, base_url: str, model_name: str, api_key: str = "local", temperature: float = 0.0):
+    def __init__(
+        self,
+        base_url: str,
+        model_name: str,
+        api_key: str = "local",
+        temperature: float = 0.0,
+        timeout: float = 600,
+        reasoning: str = "medium",
+        enable_thinking: bool = True,
+    ):
         self.base_url = base_url.rstrip('/')
         self.model_name = model_name
         self.api_key = api_key
         self.temperature = temperature
+        self.reasoning = reasoning
+        self.reasoning_budget = REASONING_EFFORT_TOKEN_BUDGETS.get(reasoning, 2048)
+        self.enable_thinking = enable_thinking
+        self.timeout = timeout
         self.url = f"{self.base_url}/chat/completions"
 
     def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
@@ -103,11 +125,15 @@ class OpenAICompatibleDriver(LLMDriver):
             "model": self.model_name,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": 4096
+            "max_tokens": 4096,
+            "reasoning_effort": self.reasoning,
+            "chat_template_kwargs": {
+                "enable_thinking": self.enable_thinking
+            }
         }
 
         try:
-            response = requests.post(self.url, headers=headers, json=payload)
+            response = requests.post(self.url, headers=headers, json=payload, timeout=self.timeout)
             response.raise_for_status()
             response_json = response.json()
             
