@@ -1,13 +1,10 @@
 package org.swam.sirio_mcp_server;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.util.stream.Collectors;
 
 import org.oristool.models.gspn.GSPNSteadyState;
 import org.oristool.models.gspn.GSPNTransient;
@@ -15,6 +12,7 @@ import org.oristool.models.stpn.MarkingExpr;
 import org.oristool.models.stpn.trees.StochasticTransitionFeature;
 import org.oristool.models.pn.PetriTokensAdder;
 import org.oristool.models.pn.PetriTokensRemover;
+import org.oristool.models.pn.PostUpdater;
 import org.oristool.models.pn.Priority;
 import org.oristool.petrinet.EnablingFunction;
 import org.oristool.petrinet.InhibitorArc;
@@ -84,7 +82,7 @@ public class SirioService {
 
         node_names.stream()
                 .map(petriNet::getPlace)
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .forEach(petriNet::removePlace);
     }
 
@@ -107,7 +105,7 @@ public class SirioService {
         PetriNetUtils.checkNetAndMarking(petriNet, marking);
         transition_names.stream()
                 .map(petriNet::getTransition)
-                .filter(java.util.Objects::nonNull)
+                .filter(Objects::nonNull)
                 .forEach(transition -> {
                         petriNet.getPreconditions(transition)
                                 .forEach(petriNet::removePrecondition);
@@ -233,10 +231,10 @@ public class SirioService {
         PetriNetUtils.checkNetAndMarking(petriNet, marking);
         return petriNet.getEnabledTransitions(marking).stream()
                 .map(Transition::getName)
-                .collect(java.util.stream.Collectors.toList());
+                .collect(Collectors.toList());
     }
 
-    @Tool(name = "fire_transition", description = "Fires a specific transition to advance the marking (Token Game). Updates the current marking of the system")
+        @Tool(name = "fire_transition", description = "Fires a specific transition to advance the marking (Token Game). Updates the current marking of the system. If a PostUpdater is defined on the transition, it will be executed after standard token additions/removals")
     public String fireTransition(
             @ToolParam(description = "Name of the transition to fire") String transition_name) {
         PetriNetUtils.checkNetAndMarking(petriNet, marking);
@@ -247,13 +245,43 @@ public class SirioService {
                     "Transition " + transition_name + " is not enabled in the current marking.");
         }
 
-        PetriTokensAdder pta = new PetriTokensAdder();
-        pta.update(marking, petriNet, t);
-
         PetriTokensRemover ptr = new PetriTokensRemover();
         ptr.update(marking, petriNet, t);
 
+        PetriTokensAdder pta = new PetriTokensAdder();
+        pta.update(marking, petriNet, t);
+
+        // Execute PostUpdater if present
+        PostUpdater postUpdater = t.getFeature(PostUpdater.class);
+        if (postUpdater != null) {
+            postUpdater.update(marking, petriNet, t);
+        }
+
         return marking.toString();
+    }
+
+    @Tool(name = "add_post_updater", description = "Add a post-updater to a transition. The expression defines how to update the marking after token additions/removals. Syntax: place1 = expr1; place2 = expr2; ... where expressions can use place names as variables. Example: p1 = p1 + p2 + max(p3, p4); p2 = If(p1 > p3, p4, p5). Note that all expressions are evaluated before updating the marking, using the current token counts.")
+    public void addPostUpdater(
+            @ToolParam(description = "Name of the transition") String transition_name,
+            @ToolParam(description = "Expression defining the marking updates. Syntax: place1 = expr1; place2 = expr2; ... where expressions can use place names as variables. Example: p1 = p1 + p2 + max(p3, p4); p2 = If(p1 > p3, p4, p5)") String expression) {
+        PetriNetUtils.checkNetAndMarking(petriNet, marking);
+        Transition t = PetriNetUtils.findTransitionByName(petriNet, transition_name);
+
+        // Remove existing PostUpdater if present
+        t.removeFeature(PostUpdater.class);
+
+        // Add new PostUpdater
+        PostUpdater postUpdater = new PostUpdater(expression, petriNet);
+        t.addFeature(postUpdater);
+    }
+
+    @Tool(name = "remove_post_updater", description = "Remove a post-updater from a transition")
+    public void removePostUpdater(
+            @ToolParam(description = "Name of the transition") String transition_name) {
+        PetriNetUtils.checkNetAndMarking(petriNet, marking);
+        Transition t = PetriNetUtils.findTransitionByName(petriNet, transition_name);
+
+        t.removeFeature(PostUpdater.class);
     }
 
     @Tool(name = "get_transition_features", description = "Retrieves all features and parameters of a specific transition using deep reflection.")
@@ -330,6 +358,7 @@ public class SirioService {
                 Object value = field.get(obj);
 
                 output.append(prefix).append(name).append(": ").append(value).append("\n");
+
                 field.setAccessible(false);
             } catch (Exception e) {
                 // Ignora errori di accesso
@@ -434,15 +463,47 @@ public class SirioService {
             throw new IllegalStateException("Petri net and marking must be created before running analysis.");
         }
 
-        // Il GSPNTransient.builder accetta un array di double[] --> Converto la lista di Double in un array di double
-        double[] timePointsArray = timePoints.stream()
-                .mapToDouble(Double::doubleValue)
-                .toArray();
+        Pair<Map<Marking, Integer>, double[][]> result; // Prepare variable for calculation
+        double[] timePointsArray;
 
-        // Creo l'analizzatore ed eseguo i calcoli
-        Pair<Map<Marking, Integer>, double[][]> result = GSPNTransient.builder()
-                .timePoints(timePointsArray) // Costruisce l'analizzatore
-                .build().compute(petriNet, marking); // Esegue il calcolo
+        if (timePoints.size() == 3 && timePoints.get(2) < timePoints.get(1))
+        {
+            var start = timePoints.get(0);
+            var end = timePoints.get(1);
+            var step = timePoints.get(2);
+
+            // There is no other reason to pass 3 values with the last one smaller than to use those values as a range
+            result = GSPNTransient.builder()
+                    .timePoints(start, end, step) // Uses the overloaded function that takes start, end and step
+                    .build().compute(petriNet, marking); // Esegue il calcolo
+
+            var time = start;
+            ArrayList<Double> tpList = new ArrayList<>();
+
+            while (time <= end) {
+                tpList.add(time);
+                time += step;
+            }
+            if (!tpList.isEmpty() && tpList.getLast() < end){
+                tpList.add(end);
+            }
+
+            timePointsArray = tpList.stream()
+                    .mapToDouble(Double::doubleValue)
+                    .toArray();
+        }
+        else
+        {
+            // Il GSPNTransient.builder accetta un array di double[] --> Converto la lista di Double in un array di double
+            timePointsArray = timePoints.stream()
+                    .mapToDouble(Double::doubleValue)
+                    .toArray();
+
+            // Creo l'analizzatore ed eseguo i calcoli
+            result = GSPNTransient.builder()
+                    .timePoints(timePointsArray) // Costruisce l'analizzatore
+                    .build().compute(petriNet, marking); // Esegue il calcolo
+        }
 
         // Estraggo i risultati
         Map<Marking, Integer> statePos = result.first();
