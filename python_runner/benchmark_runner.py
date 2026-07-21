@@ -670,7 +670,6 @@ def main():
         help="Disable thinking in chat_template_kwargs for OpenAI-compatible requests"
     )
     parser.set_defaults(thinking=True)
-    # TODO add reasoning effort, cfr. https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/#model
     
     args = parser.parse_args()
     
