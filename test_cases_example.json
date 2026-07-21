@@ -4,15 +4,15 @@
     {
       "id": "running_example_parsed",
       "logicExpression": "(GE1 & GE2 & GE3) | (GE4 & GE5)",
-      "maxTime": 100.0,
-      "timeStep": 1.0,
+      "maxTime": 5.0,
+      "timeStep": 0.5,
       "error": 0.1,
       "components": {
-        "GE1": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/gilbertElliotComponent.xpn" },
-        "GE2": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/gilbertElliotComponent.xpn" },
-        "GE3": { "type": "gilbert-elliot", "failureRate": 0.018, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/gilbertElliotComponent.xpn" },
-        "GE4": { "type": "gilbert-elliot", "failureRate": 0.009, "repairRate": 292.0, "xpnPath": "ComponentGSPNs/gilbertElliotComponent.xpn" },
-        "GE5": { "type": "gilbert-elliot", "failureRate": 0.009, "repairRate": 292.0, "xpnPath": "ComponentGSPNs/gilbertElliotComponent.xpn" }
+        "GE1": { "type": "gilbert-elliot", "failureRate": 18, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/gilbertElliotComponent.xpn" },
+        "GE2": { "type": "gilbert-elliot", "failureRate": 18, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/gilbertElliotComponent.xpn" },
+        "GE3": { "type": "gilbert-elliot", "failureRate": 18, "repairRate": 438.0, "xpnPath": "ComponentGSPNs/gilbertElliotComponent.xpn" },
+        "GE4": { "type": "gilbert-elliot", "failureRate": 9, "repairRate": 292.0, "xpnPath": "ComponentGSPNs/gilbertElliotComponent.xpn" },
+        "GE5": { "type": "gilbert-elliot", "failureRate": 9, "repairRate": 292.0, "xpnPath": "ComponentGSPNs/gilbertElliotComponent.xpn" }
       }
     }
   ]
