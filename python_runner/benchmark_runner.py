@@ -880,8 +880,7 @@ def main():
         
         # Write interactions log
         if interaction_history:
-            from datetime import datetime
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
             log_filename = f"interactions_{timestamp}.md"
             log_path = os.path.join(output_dir, log_filename)
             
