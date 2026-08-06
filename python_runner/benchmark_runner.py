@@ -876,7 +876,7 @@ def main():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")    
         save_report_data_json(report_data, os.path.dirname(output_dir), timestamp)
         # Write summary report
-        write_markdown_report(driver, report_data, output_dir, args.samples, args.k, interaction_history)
+        # write_markdown_report(driver, report_data, output_dir, args.samples, args.k, interaction_history)
         
         # Write interactions log
         if interaction_history:
