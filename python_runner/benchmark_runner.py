@@ -119,6 +119,19 @@ def build_components_details(components: Dict[str, Any]) -> str:
         lines.append(f"  * {name}: type={config.get('type')}, failureRate={config.get('failureRate')}, repairRate={config.get('repairRate')}")
     return "\n".join(lines)
 
+def save_report_data_json(report_data: List[Dict[str, Any]], output_root: str, timestamp: str) -> str:
+    """Save the collected benchmark report data as JSON under output/experiment_[timestamp]."""
+    report_dir = os.path.join(output_root, f"experiments/experiment_{timestamp}")
+    if not os.path.exists(report_dir):
+        os.makedirs(report_dir, exist_ok=True)
+
+    report_path = os.path.join(report_dir, "report_data.json")
+    with open(report_path, "w", encoding="utf-8") as f:
+        json.dump(report_data, f, ensure_ascii=False, indent=2)
+
+    logger.info("Saved report_data JSON to %s", report_path)
+    return report_path
+
 def run_java_baseline(workspace_path: str, case_json_path: str, case_id: str) -> Dict[str, Any]:
     """
     Runs the SirioCLI Java baseline calculations and returns the result.
@@ -824,7 +837,10 @@ def main():
             logger.info(f"Pass@{args.k}: No-MCP={no_mcp_pass_k:.2%}, MCP={mcp_pass_k:.2%}")
             
             report_data.append({
+                "model": driver.model_name,
                 "case_id": case_id,
+                "logic_expression": case.get("logicExpression"),
+                "seed": config_data.get("seed"),
                 "baseline": baseline,
                 "no_mcp": {
                     "steady_state": no_mcp_steady,
@@ -855,7 +871,10 @@ def main():
                 "no_mcp_runs": no_mcp_runs,
                 "mcp_runs": mcp_runs
             })
-            
+
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")    
+        save_report_data_json(report_data, os.path.dirname(output_dir), timestamp)
         # Write summary report
         write_markdown_report(driver, report_data, output_dir, args.samples, args.k, interaction_history)
         
