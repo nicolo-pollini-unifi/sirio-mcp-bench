@@ -51,7 +51,7 @@ SYSTEM_INSTRUCTION = (
 
     ## Objective
     Compute, for a given Fault Tree top-level event:
-    1. **Steady-state failure probability** (limiting unavailability)
+    1. **Steady-state failure probability** (limiting unavailability): the steady-state analysis must provide the probability of the top-event ever occurring in the long run.
     2. **Transient unreliability curve** Q(t) over time
 
     ## Petri Net Modeling Rules
