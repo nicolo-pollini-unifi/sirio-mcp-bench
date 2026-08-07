@@ -42,8 +42,8 @@ def is_solution_correct(
     llm_steady: float, 
     base_curve: List[Tuple[float, float]], 
     llm_curve: List[Tuple[float, float]], 
-    steady_tol: float = 0.01, 
-    transient_mae_tol: float = 0.05
+    steady_tol: float = 1e-5, 
+    transient_mae_tol: float = 1e-4
 ) -> bool:
     """
     Determines if an LLM solution is 'correct' (within a defined tolerance of the baseline).
