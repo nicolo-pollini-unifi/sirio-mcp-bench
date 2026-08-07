@@ -310,11 +310,6 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
     interactions_trace: List[Dict[str, Any]] = []
     full_text = ""
 
-    REPETITION_THRESHOLD = 0.85
-    MAX_CONSECUTIVE_REPEATS = 3
-    MAX_RECOVERY_ATTEMPTS = 1
-    recent_texts = []
-
     for turn in range(max_turns):
 
         logger.info("\n\n================================= AGENT TURN %d/%d =================================", turn + 1, max_turns)
@@ -350,26 +345,6 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
             
             if text:
                 interactions_trace.append({"type": "text", "content": text})
-                if recent_texts:
-                    similarity = SequenceMatcher(None, text, recent_texts[-1]).ratio()
-                    if similarity > REPETITION_THRESHOLD:
-                        repeat_streak = getattr(locals(), "repeat_streak", 0) + 1
-                    else:
-                        repeat_streak = 0
-                    if repeat_streak >= MAX_CONSECUTIVE_REPEATS:
-                        if recovery_attempts < MAX_RECOVERY_ATTEMPTS:
-                            recovery_attempts += 1
-                            adapter.append_assistant_turn(raw_native_content)
-                            adapter.append_continuation_request(
-                                "Stop reasoning. Call a tool now using your best current plan."
-                            )
-                            repeat_streak = 0
-                            continue
-                        else:
-                            raise SemanticLoopError(
-                                f"Semantic loop persisted after {recovery_attempts} recovery attempts"
-                            )
-                recent_texts.append(text)
 
             if not calls:
                 full_text += text
