@@ -379,11 +379,11 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
                         f.write(f"Error: `{error_msg}`\n\n")
 
                     f.write("## Content\n\n")
-                    f.write(raw_native_content.get("content", "_empty_"))
+                    f.write(raw_native_content.get("content") or "_empty_")
                     f.write("\n\n")
 
                     f.write("## Reasoning\n\n")
-                    f.write(raw_native_content.get("reasoning_content", "_empty_"))
+                    f.write(raw_native_content.get("reasoning_content") or "_empty_")
                     f.write("\n\n")
 
                     f.write("## Tool Calls\n\n")
