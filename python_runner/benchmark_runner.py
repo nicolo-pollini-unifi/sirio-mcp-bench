@@ -317,8 +317,7 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
         if turn == 0:
             from datetime import datetime
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            msg_path = "output\messages"
-            msg_path = os.path.join(msg_path + f"\{timestamp}")
+            msg_path = os.path.join("output", "messages", timestamp)
             if not os.path.exists(msg_path):
                 os.makedirs(msg_path)
 
