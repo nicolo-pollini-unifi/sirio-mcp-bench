@@ -435,7 +435,90 @@ def parse_json_from_response(text: str) -> Optional[Dict[str, Any]]:
     except Exception:
         pass
         
-    return None
+def is_top_failure_marking(marking_str: str) -> bool:
+    m_str = str(marking_str).lower()
+    if "armed" in m_str or "work" in m_str:
+        return False
+    return ("top" in m_str or "failure" in m_str) and ("fail" in m_str)
+
+def parse_mcp_transient_result(tool_result: Any) -> List[Tuple[float, float]]:
+    """
+    Parses the transient analysis tool result into a sorted list of (time, probability) tuples.
+    Handles both direct (time -> prob) dicts and full SIRIO marking dicts (time -> {Marking: prob}).
+    """
+    curve = []
+    if isinstance(tool_result, dict):
+        data_dict = tool_result.get("result") if isinstance(tool_result.get("result"), dict) else tool_result
+        if isinstance(data_dict, dict):
+            for k, v in data_dict.items():
+                try:
+                    t = float(k)
+                    if isinstance(v, (int, float)):
+                        p = float(v)
+                        curve.append((t, p))
+                    elif isinstance(v, dict):
+                        p_val = 0.0
+                        found_top = False
+                        for marking_str, prob in v.items():
+                            if is_top_failure_marking(str(marking_str)):
+                                try:
+                                    p_val += float(prob)
+                                    found_top = True
+                                except Exception:
+                                    pass
+                        if found_top:
+                            curve.append((t, p_val))
+                        elif len(v) == 1:
+                            try:
+                                curve.append((t, float(next(iter(v.values())))))
+                            except Exception:
+                                pass
+                except (ValueError, TypeError):
+                    continue
+    elif isinstance(tool_result, list):
+        for item in tool_result:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                try:
+                    curve.append((float(item[0]), float(item[1])))
+                except (ValueError, TypeError):
+                    continue
+    curve.sort(key=lambda x: x[0])
+    return curve
+
+def parse_mcp_steady_result(tool_result: Any) -> float:
+    """
+    Parses steady-state analysis tool result into a float for the top event.
+    """
+    if isinstance(tool_result, dict):
+        for key in ["steady_state", "steadyState", "result"]:
+            if key in tool_result:
+                val = tool_result[key]
+                if isinstance(val, (int, float)):
+                    return float(val)
+                try:
+                    return float(val)
+                except Exception:
+                    pass
+        p_val = 0.0
+        found_top = False
+        for marking_str, prob in tool_result.items():
+            if is_top_failure_marking(str(marking_str)):
+                try:
+                    p_val += float(prob)
+                    found_top = True
+                except Exception:
+                    pass
+        if found_top:
+            return p_val
+        if len(tool_result) == 1:
+            val = next(iter(tool_result.values()))
+            try:
+                return float(val)
+            except Exception:
+                pass
+    elif isinstance(tool_result, (int, float)):
+        return float(tool_result)
+    return float('nan')
 
 def run_evaluation_for_mode(
     driver: LLMDriver,
@@ -589,7 +672,38 @@ def run_evaluation_for_mode(
             steady_error = compute_steady_state_error(baseline["steadyState"], steady_state)
             mae, rmse = compute_curve_metrics(baseline["transientResult"], transient_result)
                 
-        samples.append({
+        # Evaluated on active STPN model directly via MCP solver (Semantic Modeling Correctness)
+        semantic_modeling_correct = False
+        semantic_steady_error = float('nan')
+        semantic_mae = float('nan')
+        semantic_rmse = float('nan')
+        mcp_steady_direct = float('nan')
+        mcp_curve_direct = []
+
+        if with_mcp and mcp_client and provider != "mock":
+            try:
+                time_points = [pt[0] for pt in baseline["transientResult"]]
+                direct_transient_res = mcp_client.handle_tool_call("execute_transient_analysis", {"timePoints": time_points})
+                direct_steady_res = mcp_client.handle_tool_call("execute_steady_state_analysis", {})
+                
+                mcp_curve_direct = parse_mcp_transient_result(direct_transient_res)
+                mcp_steady_direct = parse_mcp_steady_result(direct_steady_res)
+                
+                if mcp_curve_direct:
+                    semantic_mae, semantic_rmse = compute_curve_metrics(baseline["transientResult"], mcp_curve_direct)
+                if not np.isnan(mcp_steady_direct):
+                    semantic_steady_error = compute_steady_state_error(baseline["steadyState"], mcp_steady_direct)
+                    
+                semantic_modeling_correct = is_solution_correct(
+                    base_steady=baseline["steadyState"],
+                    llm_steady=mcp_steady_direct,
+                    base_curve=baseline["transientResult"],
+                    llm_curve=mcp_curve_direct
+                )
+            except Exception as ex:
+                logger.warning(f"Failed to execute direct solver on active MCP STPN model: {ex}")
+
+        sample_dict = {
             "run_index": i,
             "raw_text": raw_text,
             "tool_calls": tool_calls,
@@ -605,7 +719,17 @@ def run_evaluation_for_mode(
             "latency_seconds": latency,
             "error": error_msg,
             "error_type": type(e).__name__ if 'e' in dir() else None
-        })
+        }
+
+        if with_mcp:
+            sample_dict["semantic_modeling_correct"] = semantic_modeling_correct
+            sample_dict["semantic_steady_error"] = semantic_steady_error
+            sample_dict["semantic_mae"] = semantic_mae
+            sample_dict["semantic_rmse"] = semantic_rmse
+            sample_dict["mcp_steady_direct"] = mcp_steady_direct
+            sample_dict["mcp_curve_direct"] = mcp_curve_direct
+
+        samples.append(sample_dict)
         
     executable_rate = float(sum(1 for s in samples if s["success"])) / num_samples
     return samples, executable_rate, correct_count
@@ -890,11 +1014,15 @@ def main():
                     "run_index": run["run_index"],
                     "success": run["success"],
                     "correct": run["correct"],
+                    "semantic_modeling_correct": run.get("semantic_modeling_correct", False),
                     "pass_1": p1_val,
                     "steady_state": clean_nan(run["steady_state"]),
                     "steady_error": clean_nan(run["steady_error"]),
                     "mae": clean_nan(run["mae"]),
                     "rmse": clean_nan(run["rmse"]),
+                    "semantic_steady_error": clean_nan(run.get("semantic_steady_error")),
+                    "semantic_mae": clean_nan(run.get("semantic_mae")),
+                    "semantic_rmse": clean_nan(run.get("semantic_rmse")),
                     "transient_result": run["transient_result"],
                     "latency_seconds": run["latency_seconds"],
                     "tool_calls_count": len(run["tool_calls"])
@@ -905,11 +1033,18 @@ def main():
             mcp_avg_mae = float(np.mean([r["mae"] for r in mcp_success_runs])) if mcp_success_runs else float('nan')
             mcp_avg_rmse = float(np.mean([r["rmse"] for r in mcp_success_runs])) if mcp_success_runs else float('nan')
             
+            mcp_semantic_correct_count = sum(1 for r in mcp_runs if r.get("semantic_modeling_correct"))
+            mcp_tool_ignored_count = sum(1 for r in mcp_runs if r.get("semantic_modeling_correct") and not r.get("correct"))
+            mcp_modeling_error_count = sum(1 for r in mcp_runs if not r.get("semantic_modeling_correct"))
+
             mcp_agg = {
                 "samples_count": args.samples,
                 "executable_rate": mcp_exec_rate,
                 "pass_k": mcp_pass_k,
                 "pass_at_samples": compute_pass_at_k(args.samples, mcp_correct_count, args.samples),
+                "semantic_modeling_correctness_rate": float(mcp_semantic_correct_count) / args.samples,
+                "tool_ignored_error_rate": float(mcp_tool_ignored_count) / args.samples,
+                "modeling_error_rate": float(mcp_modeling_error_count) / args.samples,
                 "avg_latency": float(np.mean([r["latency_seconds"] for r in mcp_runs])),
                 "avg_steady_error": clean_nan(mcp_avg_steady_error),
                 "avg_mae": clean_nan(mcp_avg_mae),
