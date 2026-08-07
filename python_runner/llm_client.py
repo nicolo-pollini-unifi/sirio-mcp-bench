@@ -129,11 +129,7 @@ class OpenAICompatibleDriver(LLMDriver):
             "model": self.model_name,
             "messages": messages,
             "temperature": self.temperature,
-            "max_tokens": 4096,
-            "reasoning_effort": self.reasoning,
-            "chat_template_kwargs": {
-                "enable_thinking": self.enable_thinking
-            }
+            "max_tokens": 4096
         }
         if seed is not None:
             payload["seed"] = seed
