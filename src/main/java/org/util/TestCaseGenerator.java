@@ -45,12 +45,13 @@ public class TestCaseGenerator {
     private static final Map<String, String> COMPONENT_FILES = new HashMap<>();
 
     static {
-        COMPONENT_FILES.put("PWR", "ComponentGSPNs\\PWR_R.xpn");
-        COMPONENT_FILES.put("WAN", "ComponentGSPNs\\WAN_R.xpn");
-        COMPONENT_FILES.put("GSMR", "ComponentGSPNs\\GSMR_R.xpn");
-        COMPONENT_FILES.put("CPU", "ComponentGSPNs\\CPU_R.xpn");
-        COMPONENT_FILES.put("SFT", "ComponentGSPNs\\FPGA_R.xpn");
-        COMPONENT_FILES.put("BUS", "ComponentGSPNs\\BUS_R.xpn");
+        // COMPONENT_FILES.put("PWR", "ComponentGSPNs\\PWR_R.xpn");
+        // COMPONENT_FILES.put("WAN", "ComponentGSPNs\\WAN_R.xpn");
+        // COMPONENT_FILES.put("GSMR", "ComponentGSPNs\\GSMR_R.xpn");
+        // COMPONENT_FILES.put("CPU", "ComponentGSPNs\\CPU_R.xpn");
+        // COMPONENT_FILES.put("SFT", "ComponentGSPNs\\FPGA_R.xpn");
+        // COMPONENT_FILES.put("BUS", "ComponentGSPNs\\BUS_R.xpn");
+        COMPONENT_FILES.put("GE", "ComponentGSPNs\\gilbertElliotComponent.xpn");
     }
 
     private static final String FAILURE_CONDITION = "failure > 0";
