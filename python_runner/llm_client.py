@@ -12,7 +12,7 @@ class LLMDriver(abc.ABC):
     """
 
     @abc.abstractmethod
-    def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
+    def generate(self, prompt: str, system_instruction: Optional[str] = None, seed: Optional[int] = None) -> str:
         """
         Sends a prompt to the LLM and returns the generated string response.
         
@@ -37,7 +37,7 @@ class GeminiDriver(LLMDriver):
         self.timeout = timeout
         self.url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
 
-    def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
+    def generate(self, prompt: str, system_instruction: Optional[str] = None, seed: Optional[int] = None) -> str:
         headers = {"Content-Type": "application/json"}
         
         contents = [
@@ -54,10 +54,14 @@ class GeminiDriver(LLMDriver):
             }
             
         # Standard configuration for deterministic outputs in benchmarking
-        payload["generationConfig"] = {
+        gen_config: Dict[str, Any] = {
             "temperature": self.temperature,
             "maxOutputTokens": 8192
         }
+        if seed is not None:
+            gen_config["seed"] = seed
+            
+        payload["generationConfig"] = gen_config
 
         try:
             response = requests.post(self.url, headers=headers, json=payload, timeout = self.timeout)
@@ -109,7 +113,7 @@ class OpenAICompatibleDriver(LLMDriver):
         self.timeout = timeout
         self.url = f"{self.base_url}/chat/completions"
 
-    def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
+    def generate(self, prompt: str, system_instruction: Optional[str] = None, seed: Optional[int] = None) -> str:
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
@@ -131,6 +135,8 @@ class OpenAICompatibleDriver(LLMDriver):
                 "enable_thinking": self.enable_thinking
             }
         }
+        if seed is not None:
+            payload["seed"] = seed
 
         try:
             response = requests.post(self.url, headers=headers, json=payload, timeout=self.timeout)
@@ -154,7 +160,7 @@ class MockLLMDriver(LLMDriver):
     def __init__(self, baseline_data: Optional[Dict[str, Any]] = None):
         self.baseline_data = baseline_data
 
-    def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
+    def generate(self, prompt: str, system_instruction: Optional[str] = None, seed: Optional[int] = None) -> str:
         # Returns a simulated chain of thought followed by the JSON block containing baseline data
         data = self.baseline_data or {
             "steadyState": 0.05,

@@ -288,7 +288,7 @@ def execute_agent_loop_mock(driver: LLMDriver, mcp_client: BaseMCPClient, prompt
 
 # TODO aggiungere reasoning impostabile da CLI
 # TODO vogliamo aggiungere una gestione del caso context length exceeded?
-def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str, max_turns: int = 100) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
+def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str, max_turns: int = 100, seed: Optional[int] = None) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Unico entry point del loop agente. Seleziona l'adapter corretto in base
     al tipo di driver ricevuto e delega ad esso tutte le specificità del
@@ -298,9 +298,9 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
     mcp_tools = mcp_client.list_tools()
 
     if isinstance(driver, GeminiDriver):
-        adapter = GeminiAdapter(driver, mcp_tools, SYSTEM_INSTRUCTION)
+        adapter = GeminiAdapter(driver, mcp_tools, SYSTEM_INSTRUCTION, seed=seed)
     elif isinstance(driver, OpenAICompatibleDriver):
-        adapter = OpenAIAdapter(driver, mcp_tools, SYSTEM_INSTRUCTION)
+        adapter = OpenAIAdapter(driver, mcp_tools, SYSTEM_INSTRUCTION, seed=seed)
     else:
         raise ValueError(f"Unsupported driver type for execute_agent_loop: {type(driver).__name__}")
 
@@ -442,7 +442,8 @@ def run_evaluation_for_mode(
     provider: str,
     num_samples: int,
     verbose_interactions: bool = False,
-    max_turns: int = 100
+    max_turns: int = 100,
+    base_seed: Optional[int] = None
 ) -> Tuple[List[Dict[str, Any]], float, float]:
     """
     Runs the evaluation for a single mode (with or without MCP), possibly multiple times
@@ -463,6 +464,8 @@ def run_evaluation_for_mode(
         error_msg = None
         interactions_trace = []
         
+        sample_seed = base_seed + i if base_seed is not None else None
+        
         try:
             if isinstance(driver, MockLLMDriver):
                 driver.baseline_data = baseline
@@ -472,7 +475,7 @@ def run_evaluation_for_mode(
                 if provider == "mock":
                     raw_text, tool_calls, interactions_trace = execute_agent_loop_mock(driver, mcp_client, prompt, baseline)
                 else:
-                    raw_text, tool_calls, interactions_trace = execute_agent_loop(driver, mcp_client, prompt, max_turns)
+                    raw_text, tool_calls, interactions_trace = execute_agent_loop(driver, mcp_client, prompt, max_turns, seed=sample_seed)
             else:
                 # Without MCP direct prompt with continuation support
                 if provider == "gemini":
@@ -480,10 +483,13 @@ def run_evaluation_for_mode(
                     history = [{"role": "user", "parts": [{"text": prompt}]}]
                     raw_text = ""
                     for turn in range(5):
+                        gen_config = {"temperature": driver.temperature, "maxOutputTokens": 8192}
+                        if sample_seed is not None:
+                            gen_config["seed"] = sample_seed
                         payload = {
                             "contents": history,
                             "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
-                            "generationConfig": {"temperature": driver.temperature, "maxOutputTokens": 8192}
+                            "generationConfig": gen_config
                         }
                         response = requests.post(driver.url, headers=headers, json=payload, timeout=600)
                         response.raise_for_status()
@@ -520,6 +526,8 @@ def run_evaluation_for_mode(
                             "temperature": driver.temperature,
                             "max_tokens": 8192
                         }
+                        if sample_seed is not None:
+                            payload["seed"] = sample_seed
                         response = requests.post(driver.url, headers=headers, json=payload, timeout=600)
                         response.raise_for_status()
                         response_json = response.json()
@@ -538,7 +546,7 @@ def run_evaluation_for_mode(
                         messages.append({"role": "user", "content": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."})
                 else:
                     # Mock driver fallback
-                    raw_text = driver.generate(prompt, SYSTEM_INSTRUCTION)
+                    raw_text = driver.generate(prompt, SYSTEM_INSTRUCTION, seed=sample_seed)
                     interactions_trace.append({"type": "text", "content": raw_text})
                 
             if verbose_interactions:
@@ -758,7 +766,8 @@ def main():
                 provider=args.provider,
                 num_samples=args.samples,
                 verbose_interactions=args.verbose_interactions,
-                max_turns=args.max_agentic_turn
+                max_turns=args.max_agentic_turn,
+                base_seed=config_data.get("seed")
             )
             no_mcp_pass_k = compute_pass_at_k(args.samples, no_mcp_correct_count, args.k)
             
@@ -784,7 +793,8 @@ def main():
                 provider=args.provider,
                 num_samples=args.samples,
                 verbose_interactions=args.verbose_interactions,
-                max_turns=args.max_agentic_turn
+                max_turns=args.max_agentic_turn,
+                base_seed=config_data.get("seed")
             )
             mcp_pass_k = compute_pass_at_k(args.samples, mcp_correct_count, args.k)
             

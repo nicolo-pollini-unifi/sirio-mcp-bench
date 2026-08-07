@@ -1,5 +1,5 @@
 import json
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from llm_client import GeminiDriver, OpenAICompatibleDriver
 
@@ -36,9 +36,10 @@ def _extract_openai_step(response_json: Dict[str, Any]):
 class GeminiAdapter:
     """Incapsula tutte le specificità del formato Gemini."""
 
-    def __init__(self, driver: GeminiDriver, mcp_tools: List[Dict[str, Any]], system_instruction: str):
+    def __init__(self, driver: GeminiDriver, mcp_tools: List[Dict[str, Any]], system_instruction: str, seed: Optional[int] = None):
         self.driver = driver
         self.system_instruction = system_instruction
+        self.seed = seed
         self.headers = {"Content-Type": "application/json"}
         declarations = []
         for tool in mcp_tools:
@@ -59,11 +60,14 @@ class GeminiAdapter:
         self.history = [{"role": "user", "parts": [{"text": prompt}]}]
 
     def build_request(self):
+        gen_config = {"temperature": self.driver.temperature, "maxOutputTokens": 8192}
+        if self.seed is not None:
+            gen_config["seed"] = self.seed
         payload = {
             "contents": self.history,
             "systemInstruction": {"parts": [{"text": self.system_instruction}]},
             "tools": self.tools,
-            "generationConfig": {"temperature": self.driver.temperature, "maxOutputTokens": 8192}
+            "generationConfig": gen_config
         }
         return self.driver.url, self.headers, payload
 
@@ -90,9 +94,10 @@ class GeminiAdapter:
 class OpenAIAdapter:
     """Incapsula tutte le specificità del formato OpenAI-compatible."""
 
-    def __init__(self, driver: OpenAICompatibleDriver, mcp_tools: List[Dict[str, Any]], system_instruction: str):
+    def __init__(self, driver: OpenAICompatibleDriver, mcp_tools: List[Dict[str, Any]], system_instruction: str, seed: Optional[int] = None):
         self.driver = driver
         self.system_instruction = system_instruction
+        self.seed = seed
         self.headers = {"Content-Type": "application/json", "Authorization": f"Bearer {driver.api_key}"}
         self.tools = mcp_tools
         self.messages: List[Dict[str, Any]] = []
@@ -116,6 +121,8 @@ class OpenAIAdapter:
                 "enable_thinking": self.driver.enable_thinking
             }
         }
+        if self.seed is not None:
+            payload["seed"] = self.seed
         return self.driver.url, self.headers, payload
 
     def parse_response(self, response_json):
