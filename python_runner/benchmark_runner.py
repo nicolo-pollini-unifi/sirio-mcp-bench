@@ -684,7 +684,10 @@ def main():
     elif args.provider == "mock":
         driver = MockLLMDriver(temperature=args.temperature)
     else:
-        driver = OpenAICompatibleDriver(base_url=args.openai_url, model_name=args.openai_model, api_key=args.openai_key, temperature=args.temperature, reasoning=args.reasoning_effort, enable_thinking=args.thinking)
+        openai_key = args.openai_key
+        if openai_key == "local" or not openai_key:
+            openai_key = os.environ.get("OPENAI_API_KEY") or "local"
+        driver = OpenAICompatibleDriver(base_url=args.openai_url, model_name=args.openai_model, api_key=openai_key, temperature=args.temperature, reasoning=args.reasoning_effort, enable_thinking=args.thinking)
         
     # Build classpath for stdio/sse real client
     classpath = ""
