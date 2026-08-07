@@ -567,8 +567,10 @@ def run_evaluation_for_mode(
             
         latency = time.time() - start_time
         
-        # Check correctness
+        # Check correctness and compute error metrics per sample
         correct = False
+        steady_error = float('nan')
+        mae, rmse = float('nan'), float('nan')
         if success:
             correct = is_solution_correct(
                 base_steady=baseline["steadyState"],
@@ -578,6 +580,9 @@ def run_evaluation_for_mode(
             )
             if correct:
                 correct_count += 1
+            
+            steady_error = compute_steady_state_error(baseline["steadyState"], steady_state)
+            mae, rmse = compute_curve_metrics(baseline["transientResult"], transient_result)
                 
         samples.append({
             "run_index": i,
@@ -587,6 +592,9 @@ def run_evaluation_for_mode(
             "success": success,
             "parsed_data": parsed_data,
             "steady_state": steady_state,
+            "steady_error": steady_error,
+            "mae": mae,
+            "rmse": rmse,
             "transient_result": transient_result,
             "correct": correct,
             "latency_seconds": latency,
@@ -635,6 +643,11 @@ def generate_comparative_plots(
     plt.close()
 
 def main():
+    def clean_nan(val):
+        if isinstance(val, (int, float)) and np.isnan(val):
+            return None
+        return val
+
     parser = argparse.ArgumentParser(description="Fault Tree Quantitative Analysis Benchmarking Orchestrator")
     parser.add_argument("--config", default="test_cases_example.json", help="Path to input test cases configuration JSON")
     parser.add_argument("--api-key", default=None, help="Gemini API Key (Google AI Studio)")
@@ -823,6 +836,86 @@ def main():
             logger.info(f"MAE: No-MCP={no_mcp_mae:.6f}, MCP={mcp_mae:.6f}")
             logger.info(f"Pass@{args.k}: No-MCP={no_mcp_pass_k:.2%}, MCP={mcp_pass_k:.2%}")
             
+            # Calculate metrics for no_mcp
+            no_mcp_samples_data = []
+            no_mcp_pass_1_list = []
+            for run in no_mcp_runs:
+                p1_val = 1.0 if run["correct"] else 0.0
+                no_mcp_pass_1_list.append(p1_val)
+                no_mcp_samples_data.append({
+                    "run_index": run["run_index"],
+                    "success": run["success"],
+                    "correct": run["correct"],
+                    "pass_1": p1_val,
+                    "steady_state": clean_nan(run["steady_state"]),
+                    "steady_error": clean_nan(run["steady_error"]),
+                    "mae": clean_nan(run["mae"]),
+                    "rmse": clean_nan(run["rmse"]),
+                    "transient_result": run["transient_result"],
+                    "latency_seconds": run["latency_seconds"]
+                })
+            
+            no_mcp_success_runs = [r for r in no_mcp_runs if r["success"]]
+            no_mcp_avg_steady_error = float(np.mean([r["steady_error"] for r in no_mcp_success_runs])) if no_mcp_success_runs else float('nan')
+            no_mcp_avg_mae = float(np.mean([r["mae"] for r in no_mcp_success_runs])) if no_mcp_success_runs else float('nan')
+            no_mcp_avg_rmse = float(np.mean([r["rmse"] for r in no_mcp_success_runs])) if no_mcp_success_runs else float('nan')
+            
+            no_mcp_agg = {
+                "samples_count": args.samples,
+                "executable_rate": no_mcp_exec_rate,
+                "pass_k": no_mcp_pass_k,
+                "pass_at_samples": compute_pass_at_k(args.samples, no_mcp_correct_count, args.samples),
+                "avg_latency": float(np.mean([r["latency_seconds"] for r in no_mcp_runs])),
+                "avg_steady_error": clean_nan(no_mcp_avg_steady_error),
+                "avg_mae": clean_nan(no_mcp_avg_mae),
+                "avg_rmse": clean_nan(no_mcp_avg_rmse),
+                "pass_1_mean": float(np.mean(no_mcp_pass_1_list)),
+                "pass_1_std": float(np.std(no_mcp_pass_1_list))
+            }
+            if args.samples // 2 > 0:
+                no_mcp_agg["pass_at_half_samples"] = compute_pass_at_k(args.samples, no_mcp_correct_count, args.samples // 2)
+
+            # Calculate metrics for mcp
+            mcp_samples_data = []
+            mcp_pass_1_list = []
+            for run in mcp_runs:
+                p1_val = 1.0 if run["correct"] else 0.0
+                mcp_pass_1_list.append(p1_val)
+                mcp_samples_data.append({
+                    "run_index": run["run_index"],
+                    "success": run["success"],
+                    "correct": run["correct"],
+                    "pass_1": p1_val,
+                    "steady_state": clean_nan(run["steady_state"]),
+                    "steady_error": clean_nan(run["steady_error"]),
+                    "mae": clean_nan(run["mae"]),
+                    "rmse": clean_nan(run["rmse"]),
+                    "transient_result": run["transient_result"],
+                    "latency_seconds": run["latency_seconds"],
+                    "tool_calls_count": len(run["tool_calls"])
+                })
+            
+            mcp_success_runs = [r for r in mcp_runs if r["success"]]
+            mcp_avg_steady_error = float(np.mean([r["steady_error"] for r in mcp_success_runs])) if mcp_success_runs else float('nan')
+            mcp_avg_mae = float(np.mean([r["mae"] for r in mcp_success_runs])) if mcp_success_runs else float('nan')
+            mcp_avg_rmse = float(np.mean([r["rmse"] for r in mcp_success_runs])) if mcp_success_runs else float('nan')
+            
+            mcp_agg = {
+                "samples_count": args.samples,
+                "executable_rate": mcp_exec_rate,
+                "pass_k": mcp_pass_k,
+                "pass_at_samples": compute_pass_at_k(args.samples, mcp_correct_count, args.samples),
+                "avg_latency": float(np.mean([r["latency_seconds"] for r in mcp_runs])),
+                "avg_steady_error": clean_nan(mcp_avg_steady_error),
+                "avg_mae": clean_nan(mcp_avg_mae),
+                "avg_rmse": clean_nan(mcp_avg_rmse),
+                "avg_tool_calls_count": float(np.mean([len(r["tool_calls"]) for r in mcp_runs])),
+                "pass_1_mean": float(np.mean(mcp_pass_1_list)),
+                "pass_1_std": float(np.std(mcp_pass_1_list))
+            }
+            if args.samples // 2 > 0:
+                mcp_agg["pass_at_half_samples"] = compute_pass_at_k(args.samples, mcp_correct_count, args.samples // 2)
+
             report_data.append({
                 "model": driver.model_name,
                 "case_id": case_id,
@@ -830,26 +923,13 @@ def main():
                 "seed": config_data.get("seed"),
                 "baseline": baseline,
                 "no_mcp": {
-                    "steady_state": no_mcp_steady,
-                    "steady_error": no_mcp_steady_err,
-                    "mae": no_mcp_mae,
-                    "rmse": no_mcp_rmse,
-                    "executable_rate": no_mcp_exec_rate,
-                    "pass_k": no_mcp_pass_k,
-                    "avg_latency": np.mean([r["latency_seconds"] for r in no_mcp_runs])
+                    "samples": no_mcp_samples_data,
+                    "aggregated": no_mcp_agg
                 },
                 "mcp": {
-                    "steady_state": mcp_steady,
-                    "steady_error": mcp_steady_err,
-                    "mae": mcp_mae,
-                    "rmse": mcp_rmse,
-                    "executable_rate": mcp_exec_rate,
-                    "pass_k": mcp_pass_k,
-                    "avg_latency": np.mean([r["latency_seconds"] for r in mcp_runs]),
-                    "tool_calls_count": np.mean([len(r["tool_calls"]) for r in mcp_runs])
-                },
-                "plot_path": plot_path,
-                "plot_relative": plot_filename
+                    "samples": mcp_samples_data,
+                    "aggregated": mcp_agg
+                }
             })
             
             interaction_history.append({
@@ -975,25 +1055,32 @@ def write_local_report_fallback(data: List[Dict[str, Any]], report_path: str, sa
             base_ss = case["baseline"]["steadyState"]
             f.write(f"| {cid} | Baseline | {base_ss:.8f} | 0.00000000 | 0.00000000 | 0.00000000 | 100.0% | N/A |\n")
             
-            nm = case["no_mcp"]
-            ss_str = f"{nm['steady_state']:.8f}" if not np.isnan(nm['steady_state']) else "N/A"
-            se_str = f"{nm['steady_error']:.8f}" if not np.isnan(nm['steady_error']) else "N/A"
-            mae_str = f"{nm['mae']:.8f}" if not np.isnan(nm['mae']) else "N/A"
-            rmse_str = f"{nm['rmse']:.8f}" if not np.isnan(nm['rmse']) else "N/A"
-            f.write(f"| | LLM (No MCP) | {ss_str} | {se_str} | {mae_str} | {rmse_str} | {nm['executable_rate']:.1%} | {nm['pass_k']:.1%} |\n")
+            nm_agg = case["no_mcp"]["aggregated"]
+            nm_success_samples = [s for s in case["no_mcp"]["samples"] if s["success"]]
+            nm_ss_avg = np.mean([s["steady_state"] for s in nm_success_samples]) if nm_success_samples else float('nan')
             
-            m = case["mcp"]
-            m_ss_str = f"{m['steady_state']:.8f}" if not np.isnan(m['steady_state']) else "N/A"
-            m_se_str = f"{m['steady_error']:.8f}" if not np.isnan(m['steady_error']) else "N/A"
-            m_mae_str = f"{m['mae']:.8f}" if not np.isnan(m['mae']) else "N/A"
-            m_rmse_str = f"{m['rmse']:.8f}" if not np.isnan(m['rmse']) else "N/A"
-            f.write(f"| | LLM+MCP | {m_ss_str} | {m_se_str} | {m_mae_str} | {m_rmse_str} | {m['executable_rate']:.1%} | {m['pass_k']:.1%} |\n")
+            ss_str = f"{nm_ss_avg:.8f}" if not np.isnan(nm_ss_avg) else "N/A"
+            se_str = f"{nm_agg['avg_steady_error']:.8f}" if nm_agg['avg_steady_error'] is not None and not np.isnan(nm_agg['avg_steady_error']) else "N/A"
+            mae_str = f"{nm_agg['avg_mae']:.8f}" if nm_agg['avg_mae'] is not None and not np.isnan(nm_agg['avg_mae']) else "N/A"
+            rmse_str = f"{nm_agg['avg_rmse']:.8f}" if nm_agg['avg_rmse'] is not None and not np.isnan(nm_agg['avg_rmse']) else "N/A"
+            f.write(f"| | LLM (No MCP) | {ss_str} | {se_str} | {mae_str} | {rmse_str} | {nm_agg['executable_rate']:.1%} | {nm_agg['pass_k']:.1%} |\n")
+            
+            m_agg = case["mcp"]["aggregated"]
+            m_success_samples = [s for s in case["mcp"]["samples"] if s["success"]]
+            m_ss_avg = np.mean([s["steady_state"] for s in m_success_samples]) if m_success_samples else float('nan')
+            
+            m_ss_str = f"{m_ss_avg:.8f}" if not np.isnan(m_ss_avg) else "N/A"
+            m_se_str = f"{m_agg['avg_steady_error']:.8f}" if m_agg['avg_steady_error'] is not None and not np.isnan(m_agg['avg_steady_error']) else "N/A"
+            m_mae_str = f"{m_agg['avg_mae']:.8f}" if m_agg['avg_mae'] is not None and not np.isnan(m_agg['avg_mae']) else "N/A"
+            m_rmse_str = f"{m_agg['avg_rmse']:.8f}" if m_agg['avg_rmse'] is not None and not np.isnan(m_agg['avg_rmse']) else "N/A"
+            f.write(f"| | LLM+MCP | {m_ss_str} | {m_se_str} | {m_mae_str} | {m_rmse_str} | {m_agg['executable_rate']:.1%} | {m_agg['pass_k']:.1%} |\n")
             
         f.write("\n\n## 4. Evaluation and Transient Curves\n\n")
         for case in data:
             cid = case["case_id"]
+            plot_relative = f"{cid}_curve_comparison.png"
             f.write(f"### Case: {cid}\n\n")
-            f.write(f"![Transient Curve comparison]({case['plot_relative']})\n\n")
+            f.write(f"![Transient Curve comparison]({plot_relative})\n\n")
             
         f.write("## 5. Architectural Findings\n")
         f.write(
