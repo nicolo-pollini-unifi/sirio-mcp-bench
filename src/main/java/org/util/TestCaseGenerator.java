@@ -4,7 +4,6 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import org.faultTree.ComponentNode;
 import org.faultTree.GSPN;
-import org.oristool.models.stpn.trees.StochasticTransitionFeature;
 
 import java.io.FileWriter;
 import java.io.IOException;
@@ -45,23 +44,22 @@ public class TestCaseGenerator {
     private static final Map<String, String> COMPONENT_FILES = new HashMap<>();
 
     static {
-        // COMPONENT_FILES.put("PWR", "ComponentGSPNs\\PWR_R.xpn");
-        // COMPONENT_FILES.put("WAN", "ComponentGSPNs\\WAN_R.xpn");
-        // COMPONENT_FILES.put("GSMR", "ComponentGSPNs\\GSMR_R.xpn");
-        // COMPONENT_FILES.put("CPU", "ComponentGSPNs\\CPU_R.xpn");
-        // COMPONENT_FILES.put("SFT", "ComponentGSPNs\\FPGA_R.xpn");
-        // COMPONENT_FILES.put("BUS", "ComponentGSPNs\\BUS_R.xpn");
-        COMPONENT_FILES.put("GE", "ComponentGSPNs\\gilbertElliotComponent.xpn");
+        COMPONENT_FILES.put("GE", "ComponentGSPNs/gilbertElliotComponent.xpn");
     }
 
     private static final String FAILURE_CONDITION = "failure > 0";
 
     private final Map<String, GSPN> gspnCache = new HashMap<>();
-    private final long seed = 30062026;
-    private final Random random = new Random(seed);
+    private final long seed;
+    private final Random random;
 
-    // Contatori separati per prefisso
+    // Separate prefix counters
     private final Map<String, Integer> prefixCounters = new HashMap<>();
+
+    public TestCaseGenerator(long seed) {
+        this.seed = seed;
+        this.random = new Random(seed);
+    }
 
     private GSPN getOrLoadGSPN(String prefix) throws Exception {
         if (gspnCache.containsKey(prefix)) {
@@ -102,19 +100,12 @@ public class TestCaseGenerator {
         int nextId = prefixCounters.getOrDefault(prefix, 0);
         prefixCounters.put(prefix, nextId + 1);
 
-        String nodeName = prefix + String.format("%03d", nextId);
+        String nodeName = prefix + (nextId + 1); // e.g. GE1, GE2, GE3
         usedComponents.add(nodeName);
 
         return nodeName;
     }
 
-    /**
-     * Genera ricorsivamente un blocco dell'espressione.
-     *
-     * inheritedPrefix:
-     * - null  -> il prefisso può essere scelto liberamente
-     * - value -> forza quel prefisso nel sottoalbero/foglia corrente
-     */
     private String generateExpressionBlock(
             int depth,
             int maxDepth,
@@ -124,7 +115,6 @@ public class TestCaseGenerator {
             String inheritedPrefix
     ) throws Exception {
 
-        // Caso componente base
         if (depth == maxDepth) {
             String prefix = (inheritedPrefix != null)
                     ? inheritedPrefix
@@ -151,13 +141,11 @@ public class TestCaseGenerator {
 
             if (homogenizeLowestGroups) {
                 if (depth == maxDepth - 1) {
-                    // Ogni figli foglia ha lo stesso prefisso
                     childPrefix = (inheritedPrefix != null)
                             ? inheritedPrefix
                             : randomPrefix(availablePrefixes);
 
                 } else if (depth == maxDepth - 2) {
-                    // Ogni sottolivello può avere un suo prefisso, ma resta coerente al suo interno
                     childPrefix = randomPrefix(availablePrefixes);
                 }
             }
@@ -174,17 +162,15 @@ public class TestCaseGenerator {
             subBlocks.add(subBlock);
         }
 
-        boolean useKOFN = numSubBlocks >= 3 && random.nextInt(3) == 0; // 1/3 chance di usare KOFN se ci sono almeno 3 sottoblocchi
+        boolean useKOFN = numSubBlocks >= 3 && random.nextInt(3) == 0;
         if (useKOFN) {
             int k = random.nextInt(numSubBlocks - 1) + 1;
-
             if (k == 1) {
                 k = 2;
             }
             if (k == numSubBlocks) {
                 k--;
             }
-
             return "KOFN(" + k + ", " + String.join(", ", subBlocks) + ")";
         } else {
             return "(" + String.join(operatorForThisLevel, subBlocks) + ")";
@@ -195,7 +181,6 @@ public class TestCaseGenerator {
         List<String> availablePrefixes = new ArrayList<>(COMPONENT_FILES.keySet());
         List<String> usedComponents = new ArrayList<>();
 
-        // Reset dei contatori per ogni nuovo test case
         prefixCounters.clear();
 
         int depth;
@@ -227,8 +212,7 @@ public class TestCaseGenerator {
         return new TestCase(logicExpression, dictionary, tier);
     }
 
-    public void convertTestCasesToJSON(List<TestCase> testCases, String filePath) throws IOException {
-        // Definition of used records
+    public void convertTestCasesToJSON(List<TestCase> testCases, TestTier tier, long seed, String outputPath) throws IOException {
         record Component (
            String type,
            float failureRate,
@@ -247,72 +231,76 @@ public class TestCaseGenerator {
 
         record Document (
             long seed,
+            String difficulty,
+            int numCases,
             List<Case> cases
         ) {}
 
-        List<Case> cases = new LinkedList<>();
+        List<Case> cases = new ArrayList<>();
+        int caseIndex = 1;
         for (TestCase tCase : testCases) {
-            Map<String, Component> cMap = new HashMap<>();
+            Map<String, Component> cMap = new LinkedHashMap<>();
             for (String name : tCase.dictionary.keySet()) {
-                var node = tCase.dictionary.get(name);
-                var nodePetriNet = node.getComponentGSPN().getPetriNet();
-                float failureRate = nodePetriNet.getTransition("fail").getFeature(StochasticTransitionFeature.class).density().getDensities().get(0).getExponentialRate().floatValue();
-                float repairRate = nodePetriNet.getTransition("repair").getFeature(StochasticTransitionFeature.class).density().getDensities().get(0).getExponentialRate().floatValue();
+                // Reproducibly randomized rates based on the seed
+                float failureRate = 5.0f + random.nextFloat() * 25.0f;
+                failureRate = Math.round(failureRate * 10.0f) / 10.0f;
+
+                float repairRate = 100.0f + random.nextFloat() * 400.0f;
+                repairRate = Math.round(repairRate * 10.0f) / 10.0f;
+
                 String xpnPath = COMPONENT_FILES.get(name.replaceAll("\\d", ""));
                 Component c = new Component("gilbert-elliot", failureRate, repairRate, xpnPath);
-
                 cMap.put(name, c);
             }
-            Case tc = new Case("TestCaseGenerator", tCase.logicExpression, 100.0f, 1.0f, 0.1f, cMap);
+
+            float maxTime = 5.0f;
+            float timeStep = 0.5f;
+            float error = 0.1f;
+
+            String caseId = "generated_case_" + caseIndex;
+            Case tc = new Case(caseId, tCase.logicExpression, maxTime, timeStep, error, cMap);
             cases.add(tc);
+            caseIndex++;
         }
-        Document d = new Document(this.seed, cases);
+
+        Document d = new Document(seed, tier.name(), testCases.size(), cases);
 
         Gson gson = new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create();
-        try (FileWriter fw = new FileWriter(filePath + "\\generated_test_cases.json")){
+        try (FileWriter fw = new FileWriter(outputPath)) {
             gson.toJson(d, fw);
-            fw.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public static void testGeneration() {
-        try {
-            TestCaseGenerator generator = new TestCaseGenerator();
-            List<TestCase> testCases = new LinkedList<>();
-
-            System.out.println("Generating random test cases...");
-            System.out.println("=========================================");
-
-            for (int i = 1; i <= 10; i++) {
-                System.out.println("Test Case #" + i + ":");
-
-                TestTier randTier = TestTier.values()[generator.random.nextInt(TestTier.values().length)];
-                TestCase testCase = generator.generateRandomTestCase(randTier);
-                testCases.add(testCase);
-
-                System.out.println("Generated Test Case:");
-                System.out.println(" - Tier: " + testCase.getTier());
-                System.out.println(" - Logic Expression:");
-                System.out.println("   " + testCase.getLogicExpression());
-                System.out.println(" - Dictionary Keys (" + testCase.getDictionary().size() + " components):");
-                System.out.print("   ");
-
-                for (String key : testCase.getDictionary().keySet()) {
-                    System.out.print(key + " ");
-                }
-
-                System.out.println("\n-----------------------------------------");
-            }
-            generator.convertTestCasesToJSON(testCases, System.getProperty("user.dir"));
-
-        } catch (Exception e) {
-            e.printStackTrace();
         }
     }
 
     public static void main(String[] args) {
-        testGeneration();
+        String difficultyArg = "MEDIUM";
+        int numCases = 10;
+        long seed = 42L;
+        String outputPath = "generated_test_cases.json";
+
+        for (int i = 0; i < args.length; i++) {
+            if ("--difficulty".equals(args[i]) && i + 1 < args.length) {
+                difficultyArg = args[++i].toUpperCase();
+            } else if ("--numCases".equals(args[i]) && i + 1 < args.length) {
+                numCases = Integer.parseInt(args[++i]);
+            } else if ("--seed".equals(args[i]) && i + 1 < args.length) {
+                seed = Long.parseLong(args[++i]);
+            } else if ("--output".equals(args[i]) && i + 1 < args.length) {
+                outputPath = args[++i];
+            }
+        }
+
+        try {
+            TestTier tier = TestTier.valueOf(difficultyArg);
+            TestCaseGenerator generator = new TestCaseGenerator(seed);
+            List<TestCase> testCases = new ArrayList<>();
+            for (int i = 1; i <= numCases; i++) {
+                testCases.add(generator.generateRandomTestCase(tier));
+            }
+            generator.convertTestCasesToJSON(testCases, tier, seed, outputPath);
+            System.out.println("Generated " + numCases + " test cases for difficulty " + tier + " with seed " + seed + " in: " + outputPath);
+        } catch (Exception e) {
+            e.printStackTrace();
+            System.exit(1);
+        }
     }
 }

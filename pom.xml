@@ -81,8 +81,6 @@
       <groupId>org.oris-tool</groupId>
       <artifactId>sirio</artifactId>
       <version>2.0.4</version>
-      <scope>system</scope>
-      <systemPath>${project.basedir}/lib/sirio-2.0.4.jar</systemPath>
     </dependency>
     <dependency>
       <groupId>com.google.guava</groupId>
@@ -172,6 +170,35 @@
       <plugin>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <classifier>exec</classifier>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-assembly-plugin</artifactId>
+        <version>3.7.1</version>
+        <configuration>
+          <descriptorRefs>
+            <descriptorRef>jar-with-dependencies</descriptorRef>
+          </descriptorRefs>
+          <archive>
+            <manifest>
+              <mainClass>org.util.TestCaseGenerator</mainClass>
+            </manifest>
+          </archive>
+          <finalName>TestCaseGenerator</finalName>
+          <appendAssemblyId>false</appendAssemblyId>
+        </configuration>
+        <executions>
+          <execution>
+            <id>make-assembly</id>
+            <phase>package</phase>
+            <goals>
+              <goal>single</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
     </plugins>
   </build>
