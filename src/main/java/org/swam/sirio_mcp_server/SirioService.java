@@ -190,6 +190,12 @@ public class SirioService {
         return petriNet.toString() + "\n" + marking.toString();
     }
 
+    @Tool(name = "export_petri_net_graph", description = "Exports the active Petri Net graph structure as JSON")
+    public String exportPetriNetGraph() {
+        PetriNetUtils.checkNetAndMarking(petriNet, marking);
+        return org.util.PetriNetExporter.exportToJson(petriNet, marking);
+    }
+
     @Tool(name = "reset_marking", description = "Reset the current marking of the system to empty")
     public void resetMarking() {
         marking = new Marking();

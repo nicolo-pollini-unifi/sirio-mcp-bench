@@ -51,6 +51,7 @@ public class SirioCLI {
         public String caseId;
         public double steadyState;
         public List<double[]> transientResult;
+        public Map<String, Object> groundTruthGraph;
     }
 
     public static void main(String[] args) {
@@ -161,6 +162,7 @@ public class SirioCLI {
         for (BigDecimal[] row : transientMatrix) {
             result.transientResult.add(new double[]{row[0].doubleValue(), row[1].doubleValue()});
         }
+        result.groundTruthGraph = PetriNetExporter.exportToMap(sa.getSystemPetriNet(), sa.getSystemMarking());
 
         return result;
     }

@@ -25,6 +25,7 @@ from llm_client import GeminiDriver, OpenAICompatibleDriver, LLMDriver, MockLLMD
 from llm_adapters import GeminiAdapter, OpenAIAdapter
 from mcp_client import BaseMCPClient, SirioMCPMock, SirioMCPRealClient
 from metrics import compute_steady_state_error, compute_curve_metrics, is_solution_correct, compute_pass_at_k
+from graph_isomorphism import are_petri_nets_isomorphic
 
 class AgentLoopError(Exception):
     """Base exception per tutti i fallimenti del loop agentico."""
@@ -672,22 +673,26 @@ def run_evaluation_for_mode(
             steady_error = compute_steady_state_error(baseline["steadyState"], steady_state)
             mae, rmse = compute_curve_metrics(baseline["transientResult"], transient_result)
                 
-        # Evaluated on active STPN model directly via MCP solver (Semantic Modeling Correctness)
+        # Evaluated on active STPN model directly via MCP solver (Semantic & Structural Modeling Correctness)
         semantic_modeling_correct = False
+        structural_modeling_correct = False
         semantic_steady_error = float('nan')
         semantic_mae = float('nan')
         semantic_rmse = float('nan')
         mcp_steady_direct = float('nan')
         mcp_curve_direct = []
+        mcp_graph_direct = None
 
         if with_mcp and mcp_client and provider != "mock":
             try:
                 time_points = [pt[0] for pt in baseline["transientResult"]]
                 direct_transient_res = mcp_client.handle_tool_call("execute_transient_analysis", {"timePoints": time_points})
                 direct_steady_res = mcp_client.handle_tool_call("execute_steady_state_analysis", {})
+                direct_graph_res = mcp_client.handle_tool_call("export_petri_net_graph", {})
                 
                 mcp_curve_direct = parse_mcp_transient_result(direct_transient_res)
                 mcp_steady_direct = parse_mcp_steady_result(direct_steady_res)
+                mcp_graph_direct = direct_graph_res if isinstance(direct_graph_res, dict) else None
                 
                 if mcp_curve_direct:
                     semantic_mae, semantic_rmse = compute_curve_metrics(baseline["transientResult"], mcp_curve_direct)
@@ -700,8 +705,11 @@ def run_evaluation_for_mode(
                     base_curve=baseline["transientResult"],
                     llm_curve=mcp_curve_direct
                 )
+
+                if mcp_graph_direct and baseline.get("groundTruthGraph"):
+                    structural_modeling_correct = are_petri_nets_isomorphic(mcp_graph_direct, baseline["groundTruthGraph"])
             except Exception as ex:
-                logger.warning(f"Failed to execute direct solver on active MCP STPN model: {ex}")
+                logger.warning(f"Failed to execute direct solver or graph export on active MCP STPN model: {ex}")
 
         sample_dict = {
             "run_index": i,
@@ -722,7 +730,8 @@ def run_evaluation_for_mode(
         }
 
         if with_mcp:
-            sample_dict["semantic_modeling_correct"] = semantic_modeling_correct
+            sample_dict["modeling_correctness"] = semantic_modeling_correct
+            sample_dict["modeling_isomorphism"] = structural_modeling_correct
             sample_dict["semantic_steady_error"] = semantic_steady_error
             sample_dict["semantic_mae"] = semantic_mae
             sample_dict["semantic_rmse"] = semantic_rmse
@@ -1014,7 +1023,8 @@ def main():
                     "run_index": run["run_index"],
                     "success": run["success"],
                     "correct": run["correct"],
-                    "semantic_modeling_correct": run.get("semantic_modeling_correct", False),
+                    "modeling_correctness": run.get("modeling_correctness", False),
+                    "modeling_isomorphism": run.get("modeling_isomorphism", False),
                     "pass_1": p1_val,
                     "steady_state": clean_nan(run["steady_state"]),
                     "steady_error": clean_nan(run["steady_error"]),
@@ -1033,18 +1043,22 @@ def main():
             mcp_avg_mae = float(np.mean([r["mae"] for r in mcp_success_runs])) if mcp_success_runs else float('nan')
             mcp_avg_rmse = float(np.mean([r["rmse"] for r in mcp_success_runs])) if mcp_success_runs else float('nan')
             
-            mcp_semantic_correct_count = sum(1 for r in mcp_runs if r.get("semantic_modeling_correct"))
-            mcp_tool_ignored_count = sum(1 for r in mcp_runs if r.get("semantic_modeling_correct") and not r.get("correct"))
-            mcp_modeling_error_count = sum(1 for r in mcp_runs if not r.get("semantic_modeling_correct"))
+            mcp_correctness_count = sum(1 for r in mcp_runs if r.get("modeling_correctness"))
+            mcp_isomorphism_count = sum(1 for r in mcp_runs if r.get("modeling_isomorphism"))
+            mcp_alternative_count = sum(1 for r in mcp_runs if r.get("modeling_correctness") and not r.get("modeling_isomorphism"))
+            mcp_tool_ignored_count = sum(1 for r in mcp_runs if r.get("modeling_correctness") and not r.get("correct"))
+            mcp_failure_count = sum(1 for r in mcp_runs if not r.get("modeling_correctness"))
 
             mcp_agg = {
                 "samples_count": args.samples,
                 "executable_rate": mcp_exec_rate,
                 "pass_k": mcp_pass_k,
                 "pass_at_samples": compute_pass_at_k(args.samples, mcp_correct_count, args.samples),
-                "semantic_modeling_correctness_rate": float(mcp_semantic_correct_count) / args.samples,
+                "modeling_correctness_rate": float(mcp_correctness_count) / args.samples,
+                "modeling_isomorphism_rate": float(mcp_isomorphism_count) / args.samples,
+                "alternative_modeling_rate": float(mcp_alternative_count) / args.samples,
                 "tool_ignored_error_rate": float(mcp_tool_ignored_count) / args.samples,
-                "modeling_error_rate": float(mcp_modeling_error_count) / args.samples,
+                "modeling_failure_rate": float(mcp_failure_count) / args.samples,
                 "avg_latency": float(np.mean([r["latency_seconds"] for r in mcp_runs])),
                 "avg_steady_error": clean_nan(mcp_avg_steady_error),
                 "avg_mae": clean_nan(mcp_avg_mae),
