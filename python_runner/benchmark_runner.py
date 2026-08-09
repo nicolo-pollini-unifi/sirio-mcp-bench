@@ -801,8 +801,9 @@ def main():
     parser.add_argument("--sse-url", default="http://localhost:8081/sse", help="MCP server SSE URL (when mcp-mode is sse)")
     parser.add_argument("--verbose-interactions", action="store_true", help="Print detailed LLM prompts, responses, and tool calls to console during execution")
     parser.add_argument("--temperature", type=float, default=0.0, help="Temperature for LLM generation")
-    parser.add_argument("--max-agentic-turn", type=int, default=100, help="Maximum number of turns for the agent loop")
     parser.add_argument("--reasoning-effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
+    parser.add_argument("--max-agentic-turn", type=int, default=100, help="Maximum number of turns for the agent loop")
+    parser.add_argument("--case", default=None, help="Filter to run only a single case by ID")
     parser.add_argument(
         "--enable-thinking",
         dest="thinking",
@@ -880,6 +881,12 @@ def main():
         if not cases:
             # Fallback if config is single testcase
             cases = [config_data]
+            
+        if args.case:
+            cases = [c for c in cases if c.get("id") == args.case]
+            if not cases:
+                logger.error(f"Case '{args.case}' not found in configuration.")
+                sys.exit(1)
             
         logger.info(f"Loaded {len(cases)} test cases from config.")
         
