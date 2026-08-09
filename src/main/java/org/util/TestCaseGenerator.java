@@ -253,8 +253,8 @@ public class TestCaseGenerator {
                 cMap.put(name, c);
             }
 
-            float maxTime = 5.0f;
-            float timeStep = 0.5f;
+            float maxTime = 25.0f;
+            float timeStep = 1.0f;
             float error = 0.1f;
 
             String caseId = "generated_case_" + caseIndex;
