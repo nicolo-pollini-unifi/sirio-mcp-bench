@@ -6,8 +6,8 @@
     {
       "id": "generated_case_1",
       "logicExpression": "((GE1 | GE2) & (GE3 | GE4 | GE5))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -45,8 +45,8 @@
     {
       "id": "generated_case_2",
       "logicExpression": "((GE1 | GE2) | (GE3 & GE4) | (GE5 & GE6 & GE7) | (GE8 | GE9))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -108,8 +108,8 @@
     {
       "id": "generated_case_3",
       "logicExpression": "KOFN(2, (GE1 | GE2), (GE3 | GE4), (GE5 & GE6))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -153,8 +153,8 @@
     {
       "id": "generated_case_4",
       "logicExpression": "((GE1 & GE2 & GE3) & (GE4 | GE5 | GE6))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -198,8 +198,8 @@
     {
       "id": "generated_case_5",
       "logicExpression": "((GE1 | GE2 | GE3) | (GE4 & GE5 & GE6) | (GE7 & GE8))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -255,8 +255,8 @@
     {
       "id": "generated_case_6",
       "logicExpression": "((GE1 & GE2 & GE3) | (GE4 | GE5) | (GE6 | GE7))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -306,8 +306,8 @@
     {
       "id": "generated_case_7",
       "logicExpression": "(KOFN(2, GE1, GE2, GE3) & (GE4 | GE5) & (GE6 & GE7 & GE8) & KOFN(2, GE9, GE10, GE11))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -381,8 +381,8 @@
     {
       "id": "generated_case_8",
       "logicExpression": "(KOFN(2, GE1, GE2, GE3) & (GE4 & GE5 & GE6))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -426,8 +426,8 @@
     {
       "id": "generated_case_9",
       "logicExpression": "((GE1 | GE2) | (GE3 & GE4) | (GE5 | GE6 | GE7) | KOFN(2, GE8, GE9, GE10))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -495,8 +495,8 @@
     {
       "id": "generated_case_10",
       "logicExpression": "((GE1 | GE2 | GE3) | (GE4 & GE5))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -534,8 +534,8 @@
     {
       "id": "generated_case_11",
       "logicExpression": "((GE1 & GE2 & GE3) & (GE4 | GE5 | GE6))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -579,8 +579,8 @@
     {
       "id": "generated_case_12",
       "logicExpression": "((GE1 | GE2) & (GE3 | GE4) & (GE5 & GE6) & (GE7 & GE8 & GE9))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -642,8 +642,8 @@
     {
       "id": "generated_case_13",
       "logicExpression": "((GE1 & GE2) & (GE3 & GE4) & (GE5 & GE6))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -687,8 +687,8 @@
     {
       "id": "generated_case_14",
       "logicExpression": "(KOFN(2, GE1, GE2, GE3) & (GE4 & GE5))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -726,8 +726,8 @@
     {
       "id": "generated_case_15",
       "logicExpression": "((GE1 | GE2) & (GE3 & GE4) & (GE5 & GE6) & (GE7 & GE8))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -783,8 +783,8 @@
     {
       "id": "generated_case_16",
       "logicExpression": "((GE1 | GE2) | (GE3 & GE4 & GE5) | (GE6 | GE7 | GE8) | (GE9 & GE10))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -852,8 +852,8 @@
     {
       "id": "generated_case_17",
       "logicExpression": "((GE1 & GE2) | (GE3 & GE4 & GE5) | (GE6 | GE7 | GE8))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -909,8 +909,8 @@
     {
       "id": "generated_case_18",
       "logicExpression": "KOFN(2, (GE1 | GE2 | GE3), (GE4 & GE5), KOFN(2, GE6, GE7, GE8))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -966,8 +966,8 @@
     {
       "id": "generated_case_19",
       "logicExpression": "(KOFN(2, GE1, GE2, GE3) | (GE4 & GE5))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1005,8 +1005,8 @@
     {
       "id": "generated_case_20",
       "logicExpression": "(KOFN(2, GE1, GE2, GE3) | (GE4 & GE5 & GE6))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1050,8 +1050,8 @@
     {
       "id": "generated_case_21",
       "logicExpression": "(KOFN(2, GE1, GE2, GE3) & (GE4 & GE5) & (GE6 | GE7))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1101,8 +1101,8 @@
     {
       "id": "generated_case_22",
       "logicExpression": "KOFN(2, KOFN(2, GE1, GE2, GE3), (GE4 & GE5), (GE6 & GE7))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1152,8 +1152,8 @@
     {
       "id": "generated_case_23",
       "logicExpression": "((GE1 | GE2 | GE3) | KOFN(2, GE4, GE5, GE6) | (GE7 & GE8) | (GE9 | GE10))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1221,8 +1221,8 @@
     {
       "id": "generated_case_24",
       "logicExpression": "KOFN(2, (GE1 | GE2), (GE3 | GE4), (GE5 & GE6))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1266,8 +1266,8 @@
     {
       "id": "generated_case_25",
       "logicExpression": "(KOFN(2, GE1, GE2, GE3) | (GE4 | GE5))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1305,8 +1305,8 @@
     {
       "id": "generated_case_26",
       "logicExpression": "KOFN(2, (GE1 & GE2 & GE3), KOFN(2, GE4, GE5, GE6), KOFN(2, GE7, GE8, GE9), (GE10 | GE11))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1380,8 +1380,8 @@
     {
       "id": "generated_case_27",
       "logicExpression": "((GE1 | GE2 | GE3) | (GE4 & GE5) | KOFN(2, GE6, GE7, GE8))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1437,8 +1437,8 @@
     {
       "id": "generated_case_28",
       "logicExpression": "((GE1 & GE2) & (GE3 & GE4 & GE5))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1476,8 +1476,8 @@
     {
       "id": "generated_case_29",
       "logicExpression": "((GE1 & GE2) & (GE3 & GE4 & GE5))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1515,8 +1515,8 @@
     {
       "id": "generated_case_30",
       "logicExpression": "((GE1 | GE2 | GE3) | (GE4 | GE5 | GE6))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1560,8 +1560,8 @@
     {
       "id": "generated_case_31",
       "logicExpression": "KOFN(2, (GE1 | GE2), (GE3 | GE4 | GE5), (GE6 & GE7 & GE8))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
@@ -1617,8 +1617,8 @@
     {
       "id": "generated_case_32",
       "logicExpression": "KOFN(2, (GE1 & GE2), KOFN(2, GE3, GE4, GE5), (GE6 | GE7 | GE8))",
-      "maxTime": 5.0,
-      "timeStep": 0.5,
+      "maxTime": 25.0,
+      "timeStep": 1.0,
       "error": 0.1,
       "components": {
         "GE1": {
