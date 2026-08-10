@@ -52,7 +52,7 @@ SYSTEM_INSTRUCTION = (
 
     ## Objective
     Compute, for a given Fault Tree top-level event:
-    1. **Steady-state failure probability** (limiting unavailability): the steady-state analysis must provide the asymptotic unavailability of the repairable system (i.e., the steady-state probability of the TOP event condition being active at regime, evaluated independently of top-event absorption).
+    1. **Steady-state failure probability** (limiting unreliability): the steady-state analysis must provide the asymptotic unreliability of the system model (i.e., the steady-state probability of the TOP event condition being active at regime, evaluated under the top-event absorption configuration).
     2. **Transient unreliability curve** Q(t) over time: the cumulative probability of system failure over the time horizon $[0, T]$, sampled at discrete time steps $t_k$ according to the specified analysis parameters, evaluated with top-event absorption active.
 
     ## Petri Net Modeling Rules
@@ -433,10 +433,11 @@ def parse_json_from_response(text: str) -> Optional[Dict[str, Any]]:
         pass
         
 def is_top_failure_marking(marking_str: str) -> bool:
-    m_str = str(marking_str).lower()
-    if "armed" in m_str or "work" in m_str:
-        return False
-    return ("top" in m_str or "failure" in m_str) and ("fail" in m_str)
+    places = [p.strip().lower() for p in marking_str.split() if p.strip()]
+    for p in places:
+        if "top" in p and "armed" not in p and "ok" not in p and "work" not in p:
+            return True
+    return False
 
 def parse_mcp_transient_result(tool_result: Any) -> List[Tuple[float, float]]:
     """
@@ -576,7 +577,7 @@ def run_evaluation_for_mode(
                             "systemInstruction": {"parts": [{"text": SYSTEM_INSTRUCTION}]},
                             "generationConfig": gen_config
                         }
-                        response = requests.post(driver.url, headers=headers, json=payload, timeout=600)
+                        response = requests.post(driver.url, headers=headers, json=payload, timeout=120)
                         response.raise_for_status()
                         response_json = response.json()
                         candidates = response_json.get("candidates", [])
@@ -613,7 +614,7 @@ def run_evaluation_for_mode(
                         }
                         if sample_seed is not None:
                             payload["seed"] = sample_seed
-                        response = requests.post(driver.url, headers=headers, json=payload, timeout=600)
+                        response = requests.post(driver.url, headers=headers, json=payload, timeout=120)
                         response.raise_for_status()
                         response_json = response.json()
                         choices = response_json.get("choices", [])

@@ -700,7 +700,7 @@ class SirioMCPRealClient(BaseMCPClient):
             
         try:
             logger.info(f"Real MCP Tool call: {name} with args: {arguments}")
-            response = await self.session.call_tool(name, arguments)
+            response = await asyncio.wait_for(self.session.call_tool(name, arguments), timeout=60.0)
             
             text_contents = []
             for content in response.content:
