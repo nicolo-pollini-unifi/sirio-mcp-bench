@@ -546,6 +546,7 @@ def run_evaluation_for_mode(
         steady_state = float('nan')
         transient_result = []
         error_msg = None
+        error_type = None
         interactions_trace = []
         
         sample_seed = base_seed + i if base_seed is not None else None
@@ -648,6 +649,7 @@ def run_evaluation_for_mode(
                 error_msg = "Output JSON format was invalid or fields are missing."
         except Exception as e:
             error_msg = f"{type(e).__name__}: {e}"
+            error_type = type(e).__name__
             logger.error(f"Error executing run: {e}")
             
         latency = time.time() - start_time
@@ -722,7 +724,8 @@ def run_evaluation_for_mode(
             "correct": correct,
             "latency_seconds": latency,
             "error": error_msg,
-            "error_type": type(e).__name__ if 'e' in dir() else None
+            "error_type": error_type,
+            "max_turns_exceeded": (error_type == "MaxTurnsExceededError")
         }
 
         if with_mcp:
@@ -993,7 +996,8 @@ def main():
                     "mae": clean_nan(run["mae"]),
                     "rmse": clean_nan(run["rmse"]),
                     "transient_result": run["transient_result"],
-                    "latency_seconds": run["latency_seconds"]
+                    "latency_seconds": run["latency_seconds"],
+                    "max_turns_exceeded": run.get("max_turns_exceeded", False)
                 })
             
             no_mcp_success_runs = [r for r in no_mcp_runs if r["success"]]
@@ -1003,6 +1007,7 @@ def main():
             
             no_mcp_agg = {
                 "samples_count": args.samples,
+                "k": args.k,
                 "executable_rate": no_mcp_exec_rate,
                 "pass_k": no_mcp_pass_k,
                 "pass_at_samples": compute_pass_at_k(args.samples, no_mcp_correct_count, args.samples),
@@ -1011,7 +1016,8 @@ def main():
                 "avg_mae": clean_nan(no_mcp_avg_mae),
                 "avg_rmse": clean_nan(no_mcp_avg_rmse),
                 "pass_1_mean": float(np.mean(no_mcp_pass_1_list)),
-                "pass_1_std": float(np.std(no_mcp_pass_1_list))
+                "pass_1_std": float(np.std(no_mcp_pass_1_list)),
+                "max_turns_exceeded_rate": float(sum(1 for r in no_mcp_runs if r.get("max_turns_exceeded"))) / args.samples
             }
             if args.samples // 2 > 0:
                 no_mcp_agg["pass_at_half_samples"] = compute_pass_at_k(args.samples, no_mcp_correct_count, args.samples // 2)
@@ -1038,7 +1044,8 @@ def main():
                     "semantic_rmse": clean_nan(run.get("semantic_rmse")),
                     "transient_result": run["transient_result"],
                     "latency_seconds": run["latency_seconds"],
-                    "tool_calls_count": len(run["tool_calls"])
+                    "tool_calls_count": len(run["tool_calls"]),
+                    "max_turns_exceeded": run.get("max_turns_exceeded", False)
                 })
             
             mcp_success_runs = [r for r in mcp_runs if r["success"]]
@@ -1054,6 +1061,7 @@ def main():
 
             mcp_agg = {
                 "samples_count": args.samples,
+                "k": args.k,
                 "executable_rate": mcp_exec_rate,
                 "pass_k": mcp_pass_k,
                 "pass_at_samples": compute_pass_at_k(args.samples, mcp_correct_count, args.samples),
@@ -1068,7 +1076,8 @@ def main():
                 "avg_rmse": clean_nan(mcp_avg_rmse),
                 "avg_tool_calls_count": float(np.mean([len(r["tool_calls"]) for r in mcp_runs])),
                 "pass_1_mean": float(np.mean(mcp_pass_1_list)),
-                "pass_1_std": float(np.std(mcp_pass_1_list))
+                "pass_1_std": float(np.std(mcp_pass_1_list)),
+                "max_turns_exceeded_rate": float(sum(1 for r in mcp_runs if r.get("max_turns_exceeded"))) / args.samples
             }
             if args.samples // 2 > 0:
                 mcp_agg["pass_at_half_samples"] = compute_pass_at_k(args.samples, mcp_correct_count, args.samples // 2)
