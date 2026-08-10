@@ -53,6 +53,7 @@ SYSTEM_INSTRUCTION = (
     ## Objective
     Compute, for a given Fault Tree top-level event:
     1. **Steady-state failure probability** (limiting unreliability): the steady-state analysis must provide the asymptotic unreliability of the system model (i.e., the steady-state probability of the TOP event condition being active at regime, evaluated under the top-event absorption configuration).
+        *Note: Do not assume that the request is a mistake or a trivial result. Even if the limiting unreliability is known to converge to a certain value, you must not skip the derivation steps to formally obtain the result rather than stating it without analysis.*
     2. **Transient unreliability curve** Q(t) over time: the cumulative probability of system failure over the time horizon $[0, T]$, sampled at discrete time steps $t_k$ according to the specified analysis parameters, evaluated with top-event absorption active.
 
     ## Petri Net Modeling Rules
