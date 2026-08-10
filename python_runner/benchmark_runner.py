@@ -52,54 +52,50 @@ SYSTEM_INSTRUCTION = (
 
     ## Objective
     Compute, for a given Fault Tree top-level event:
-    1. **Steady-state failure probability** (limiting unavailability): the steady-state analysis must provide the probability of the top-event ever occurring in the long run.
-    2. **Transient unreliability curve** Q(t) over time
+    1. **Steady-state failure probability** (limiting unavailability): the steady-state analysis must provide the asymptotic unavailability of the repairable system (i.e., the steady-state probability of the TOP event condition being active at regime, evaluated independently of top-event absorption).
+    2. **Transient unreliability curve** Q(t) over time: the cumulative probability of system failure over the time horizon $[0, T]$, sampled at discrete time steps $t_k$ according to the specified analysis parameters, evaluated with top-event absorption active.
 
     ## Petri Net Modeling Rules
     - Model each component as a Gilbert-Elliot net: the transition rates must be as specified in the prompt. Use enabling conditions as a link between nets of different levels.
     - Implement **repair arcs**: remove a gate's token when its activating condition no longer holds (i.e., one or more inputs are repaired).
-    - **Single-fire gates (MANDATORY structural guard)**: every gate-fail transition MUST have an explicit input arc from a dedicated "armed" place (initial marking 1). This arc is a hard precondition for firing, separate from the enabling-function — a transition without this input arc is an invalid construction and must be corrected immediately via MCP tools before proceeding. Firing the gate-fail transition consumes the armed token, disabling the transition until the paired repair transition restores it. The repair transition fires only when its repair enabling-function holds and consumes only its own gate's token, never a sibling gate's.
+    - **Single-fire gates (MANDATORY structural guard)**: every gate-fail transition MUST have an explicit input arc from a dedicated "armed" place (initial marking 1). This arc is a hard precondition for firing, separate from the enabling-function, a transition without this input arc is an invalid construction and must be corrected immediately before proceeding. Firing the gate-fail transition consumes the armed token, disabling the transition until the paired repair transition restores it. The repair transition fires only when its repair enabling-function holds and consumes only its own gate's token, never a sibling gate's.
     - **Top-event absorption**: the top-event place has no repair arc — system failure is absorbing. The top-event transition's `marking-update` must explicitly zero every place in the net except the top-event place (syntax: "p<i> 0" for each place), and it must have priority higher than any other immediate transition so it preempts intermediate gate updates.
     - Use `&&` for AND and `||` for OR in all enabling functions.
-    - Begin constructing the Petri Net model via MCP tools immediately, without preamble.
 
-    ## Validation Step (before output)
-    - For every gate-fail transition in the constructed net, confirm an input arc from its armed place exists. If missing, add it via MCP tools and re-verify before continuing. Do not skip this check.
-
-    ## Behavioral Constraints
-    - Keep reasoning and intermediate text **extremely brief** to avoid context truncation.
-    - It is **mandatory** that you call MCP tools as early and often as needed to maintain mathematical precision.
-    - Do **not** approximate: use exact symbolic or numerical methods as supported by the tools.
+    ## Execution & Tool Guidelines
+    - If external tools are available in your environment, you MUST use them as early as possible to construct the model and delegate all formal computations to maintain mathematical precision.
+    - Validate your model structure (e.g., confirm armed input arcs exist) before executing solvers.
+    - Do **not** approximate math manually if formal tool execution is available.
 
     ## Output Format
-    Return the final results **only** in the following JSON code block — no additional text inside the block:
+    Your final quantitative result MUST be provided as a JSON block matching this exact structure:
 
     ```json
     {
-        "steady_state_failure_probability": <number>,
-        "unreliability_curve": [
-            {"t": <number>, "Q_t": <number>},
+        "steadyState": <number>,
+        "transientResult": [
+            [0.0, 0.0],
+            [<t1>, <prob1>],
             ...
         ]
     }
     ```
-
     '''   
 )
 
 
 USER_PROMPT_TEMPLATE = (
-    "Perform the unreliability analysis for the following event configuration:\n"
+    "Perform both the steady-state unavailability analysis and the transient unreliability analysis for the following event configuration:\n"
     "- Fault Tree Logic Expression: {logic_expression}\n"
-    "- Analysis Parameters:\n"
+    "- Transient Analysis Parameters:\n"
     "  * timeStep: {time_step}\n"
     "  * maxTime: {max_time}\n"
     "  * error limit: {error}\n"
     "- Leaf component model parameters (rates are exponential):\n"
     "{components_details}\n\n"
-    "You are encouraged to first show your reasoning, explain your chain of thoughts, "
-    "or document your analysis steps. After your explanation, you MUST provide your final "
-    "result in a markdown code block containing a JSON object in this exact format:\n"
+    "Show your step-by-step reasoning or tool interaction history first. "
+    "At the very end of your response, provide your final results in a markdown JSON block "
+    "with the following exact format:\n\n"
     "```json\n"
     "{{\n"
     "  \"steadyState\": <steady_state_probability_double>,\n"
