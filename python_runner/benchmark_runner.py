@@ -614,16 +614,71 @@ def clean_nan(val):
     return val
 
 class ProgressTracker:
+    # ANSI Escape Colors
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    GREEN = "\033[32m"
+    BLUE = "\033[34m"
+    CYAN = "\033[36m"
+    YELLOW = "\033[33m"
+    MAGENTA = "\033[35m"
+    WHITE = "\033[37m"
+
     def __init__(self, total_evals: int):
         self.total_evals = total_evals
         self.completed_evals = 0
         self.start_time = time.time()
 
+    def _get_ansi_support(self) -> bool:
+        if not sys.stdout.isatty():
+            return False
+        if os.name == 'nt':
+            if 'COLORTERM' in os.environ or 'TERM' in os.environ:
+                return True
+            try:
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+                return True
+            except Exception:
+                return False
+        return True
+
+    def _format(self, text: str, color: str, bold: bool = False) -> str:
+        if self._get_ansi_support():
+            bold_prefix = self.BOLD if bold else ""
+            return f"{bold_prefix}{color}{text}{self.RESET}"
+        return text
+
+    def get_progress_bar(self, count: int) -> str:
+        if self.total_evals <= 0:
+            return ""
+        length = 20
+        filled_length = int(round(length * count / self.total_evals))
+        
+        try:
+            bar = "█" * filled_length + "░" * (length - filled_length)
+            bar.encode(sys.stdout.encoding or 'utf-8')
+        except Exception:
+            bar = "#" * filled_length + "-" * (length - filled_length)
+            
+        pct = (count / self.total_evals) * 100
+        colored_bar = self._format(bar, self.GREEN, bold=True)
+        colored_pct = self._format(f"{pct:.1f}%", self.CYAN, bold=True)
+        return f"[{colored_bar}] {colored_pct}"
+
     def start_sample(self, case_id: str, with_mcp: bool, sample_index: int, total_samples: int):
         mode_str = "With MCP" if with_mcp else "No MCP"
+        
+        title = self._format(f"[Progress] Running evaluation {self.completed_evals + 1}/{self.total_evals}", self.YELLOW, bold=True)
+        details = self._format(f"Case: {case_id} | Mode: {mode_str} | Sample: {sample_index + 1}/{total_samples}", self.CYAN)
+        border = self._format("=" * 80, self.BLUE)
+        
         logger.info(
-            f"\n>>> [Progress] Running evaluation {self.completed_evals + 1}/{self.total_evals} "
-            f"(Case: {case_id}, Mode: {mode_str}, Sample: {sample_index + 1}/{total_samples})..."
+            f"\n{border}\n"
+            f">>> {title}\n"
+            f">>> {details}\n"
+            f"{border}"
         )
 
     def complete_sample(self):
@@ -634,10 +689,17 @@ class ProgressTracker:
         eta = avg_time * remaining
         
         eta_str = time.strftime('%H:%M:%S', time.localtime(time.time() + eta))
+        
+        bar_str = self.get_progress_bar(self.completed_evals)
+        title = self._format(f"[Progress] Completed {self.completed_evals}/{self.total_evals}", self.GREEN, bold=True)
+        stats = self._format(f"Elapsed: {elapsed:.1f}s | Avg: {avg_time:.1f}s/sample | Est. Remaining: {eta:.1f}s (ETA: {eta_str})", self.WHITE)
+        border = self._format("=" * 80, self.BLUE)
+        
         logger.info(
-            f">>> [Progress] Completed {self.completed_evals}/{self.total_evals}. "
-            f"Elapsed: {elapsed:.1f}s, Avg: {avg_time:.1f}s/sample, "
-            f"Est. Remaining: {eta:.1f}s (ETA: {eta_str})"
+            f"\n{border}\n"
+            f">>> {title} {bar_str}\n"
+            f">>> {stats}\n"
+            f"{border}"
         )
 
 def run_evaluation_for_mode(
