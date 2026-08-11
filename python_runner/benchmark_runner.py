@@ -286,7 +286,7 @@ def execute_agent_loop_mock(driver: LLMDriver, mcp_client: BaseMCPClient, prompt
 
 # TODO aggiungere reasoning impostabile da CLI
 # TODO vogliamo aggiungere una gestione del caso context length exceeded?
-def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str, max_turns: int = 100, seed: Optional[int] = None) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
+def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str, max_turns: int = 100, seed: Optional[int] = None, stream: bool = False) -> Tuple[str, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Unico entry point del loop agente. Seleziona l'adapter corretto in base
     al tipo di driver ricevuto e delega ad esso tutte le specificità del
@@ -331,13 +331,102 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
         try:
             try:
                 url, headers, payload = adapter.build_request()
-                response = requests.post(url, headers=headers, json=payload, timeout=600)
-                response.raise_for_status()
+                if stream and isinstance(driver, OpenAICompatibleDriver):
+                    payload["stream"] = True
+                    response = requests.post(url, headers=headers, json=payload, timeout=600, stream=True)
+                    response.raise_for_status()
+                    
+                    accumulated_content = ""
+                    accumulated_reasoning = ""
+                    accumulated_tool_calls = {}
+                    
+                    has_started_reasoning = False
+                    has_started_content = False
+                    
+                    for line in response.iter_lines():
+                        if not line:
+                            continue
+                        line_str = line.decode("utf-8").strip()
+                        if line_str.startswith("data: "):
+                            data_content = line_str[6:]
+                            if data_content == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data_content)
+                                choices = chunk.get("choices", [])
+                                if choices:
+                                    delta = choices[0].get("delta", {})
+                                    
+                                    reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                                    if reasoning:
+                                        if not has_started_reasoning:
+                                            sys.stdout.write("\n[LLM Reasoning]: ")
+                                            sys.stdout.flush()
+                                            has_started_reasoning = True
+                                        accumulated_reasoning += reasoning
+                                        sys.stdout.write(reasoning)
+                                        sys.stdout.flush()
+                                        
+                                    content = delta.get("content") or ""
+                                    if content:
+                                        if not has_started_content:
+                                            sys.stdout.write("\n[LLM Response]: ")
+                                            sys.stdout.flush()
+                                            has_started_content = True
+                                        accumulated_content += content
+                                        sys.stdout.write(content)
+                                        sys.stdout.flush()
+                                        
+                                    tool_calls_list = delta.get("tool_calls", [])
+                                    for tc in tool_calls_list:
+                                        idx = tc.get("index")
+                                        if idx is None:
+                                            continue
+                                        if idx not in accumulated_tool_calls:
+                                            accumulated_tool_calls[idx] = {
+                                                "id": tc.get("id"),
+                                                "type": "function",
+                                                "function": {
+                                                    "name": tc.get("function", {}).get("name") or "",
+                                                    "arguments": tc.get("function", {}).get("arguments") or ""
+                                                }
+                                            }
+                                        else:
+                                            existing = accumulated_tool_calls[idx]
+                                            if tc.get("id"):
+                                                existing["id"] = tc.get("id")
+                                            if tc.get("function", {}).get("name"):
+                                                existing["function"]["name"] = tc["function"]["name"]
+                                            if tc.get("function", {}).get("arguments"):
+                                                existing["function"]["arguments"] += tc["function"]["arguments"]
+                            except Exception:
+                                pass
+                    print()
+                    
+                    message_dict = {
+                        "role": "assistant",
+                        "content": accumulated_content
+                    }
+                    if accumulated_reasoning:
+                        message_dict["reasoning_content"] = accumulated_reasoning
+                    if accumulated_tool_calls:
+                        message_dict["tool_calls"] = [
+                            accumulated_tool_calls[k] for k in sorted(accumulated_tool_calls.keys())
+                        ]
+                    response_json = {
+                        "choices": [
+                            {
+                                "message": message_dict
+                            }
+                        ]
+                    }
+                else:
+                    response = requests.post(url, headers=headers, json=payload, timeout=600)
+                    response.raise_for_status()
+                    response_json = response.json()
             except requests.exceptions.RequestException as e:
                 body = getattr(e.response, "text", "")[:1000] if getattr(e, "response", None) else ""
                 raise NetworkError(f"HTTP request failed at turn {turn+1}: {e} | Response body: {body}") from e
-            
-            response_json = response.json()
             text, calls, raw_native_content = adapter.parse_response(response_json)
             
             if text:
@@ -519,6 +608,38 @@ def parse_mcp_steady_result(tool_result: Any) -> float:
         return float(tool_result)
     return float('nan')
 
+def clean_nan(val):
+    if isinstance(val, (int, float)) and np.isnan(val):
+        return None
+    return val
+
+class ProgressTracker:
+    def __init__(self, total_evals: int):
+        self.total_evals = total_evals
+        self.completed_evals = 0
+        self.start_time = time.time()
+
+    def start_sample(self, case_id: str, with_mcp: bool, sample_index: int, total_samples: int):
+        mode_str = "With MCP" if with_mcp else "No MCP"
+        logger.info(
+            f"\n>>> [Progress] Running evaluation {self.completed_evals + 1}/{self.total_evals} "
+            f"(Case: {case_id}, Mode: {mode_str}, Sample: {sample_index + 1}/{total_samples})..."
+        )
+
+    def complete_sample(self):
+        self.completed_evals += 1
+        elapsed = time.time() - self.start_time
+        avg_time = elapsed / self.completed_evals
+        remaining = self.total_evals - self.completed_evals
+        eta = avg_time * remaining
+        
+        eta_str = time.strftime('%H:%M:%S', time.localtime(time.time() + eta))
+        logger.info(
+            f">>> [Progress] Completed {self.completed_evals}/{self.total_evals}. "
+            f"Elapsed: {elapsed:.1f}s, Avg: {avg_time:.1f}s/sample, "
+            f"Est. Remaining: {eta:.1f}s (ETA: {eta_str})"
+        )
+
 def run_evaluation_for_mode(
     driver: LLMDriver,
     mcp_client: BaseMCPClient,
@@ -529,7 +650,10 @@ def run_evaluation_for_mode(
     num_samples: int,
     verbose_interactions: bool = False,
     max_turns: int = 100,
-    base_seed: Optional[int] = None
+    base_seed: Optional[int] = None,
+    tracker: Optional[ProgressTracker] = None,
+    case_id: str = "",
+    stream: bool = False
 ) -> Tuple[List[Dict[str, Any]], float, float]:
     """
     Runs the evaluation for a single mode (with or without MCP), possibly multiple times
@@ -540,6 +664,9 @@ def run_evaluation_for_mode(
     correct_count = 0
     
     for i in range(num_samples):
+        if tracker:
+            tracker.start_sample(case_id, with_mcp, i, num_samples)
+            
         start_time = time.time()
         tool_calls = []
         raw_text = ""
@@ -562,7 +689,7 @@ def run_evaluation_for_mode(
                 if provider == "mock":
                     raw_text, tool_calls, interactions_trace = execute_agent_loop_mock(driver, mcp_client, prompt, baseline)
                 else:
-                    raw_text, tool_calls, interactions_trace = execute_agent_loop(driver, mcp_client, prompt, max_turns, seed=sample_seed)
+                    raw_text, tool_calls, interactions_trace = execute_agent_loop(driver, mcp_client, prompt, max_turns, seed=sample_seed, stream=stream)
             else:
                 # Without MCP direct prompt with continuation support
                 if provider == "gemini":
@@ -570,6 +697,7 @@ def run_evaluation_for_mode(
                     history = [{"role": "user", "parts": [{"text": prompt}]}]
                     raw_text = ""
                     for turn in range(5):
+                        logger.info(f"  [No-MCP] Turn {turn+1}/5: Requesting LLM...")
                         gen_config = {"temperature": driver.temperature, "maxOutputTokens": 8192}
                         if sample_seed is not None:
                             gen_config["seed"] = sample_seed
@@ -583,14 +711,17 @@ def run_evaluation_for_mode(
                         response_json = response.json()
                         candidates = response_json.get("candidates", [])
                         if not candidates:
+                            logger.info(f"  [No-MCP] Turn {turn+1}/5: No candidates returned.")
                             break
                         content = candidates[0].get("content", {})
                         parts = content.get("parts", [])
                         text = "".join([p.get("text", "") for p in parts if "text" in p])
                         raw_text += text
                         interactions_trace.append({"type": "text", "content": text})
+                        logger.info(f"  [No-MCP] Turn {turn+1}/5: Received response ({len(text)} chars).")
                         
                         if "```json" in raw_text and parse_json_from_response(raw_text):
+                            logger.info("  [No-MCP] Found valid JSON results block. Ending early.")
                             break
                             
                         # If incomplete, append turns to history and continue
@@ -607,30 +738,99 @@ def run_evaluation_for_mode(
                     ]
                     raw_text = ""
                     for turn in range(5):
-                        payload = {
-                            "model": driver.model_name,
-                            "messages": messages,
-                            "temperature": driver.temperature,
-                            "max_tokens": 8192
-                        }
-                        if sample_seed is not None:
-                            payload["seed"] = sample_seed
-                        response = requests.post(driver.url, headers=headers, json=payload, timeout=120)
-                        response.raise_for_status()
-                        response_json = response.json()
-                        choices = response_json.get("choices", [])
-                        if not choices:
-                            break
-                        msg = choices[0].get("message", {})
-                        text = msg.get("content", "") or ""
-                        raw_text += text
-                        interactions_trace.append({"type": "text", "content": text})
-                        
-                        if "```json" in raw_text and parse_json_from_response(raw_text):
-                            break
+                        if stream:
+                            logger.info(f"  [No-MCP] Turn {turn+1}/5: Requesting LLM (with streaming)...")
+                            payload = {
+                                "model": driver.model_name,
+                                "messages": messages,
+                                "temperature": driver.temperature,
+                                "max_tokens": 8192,
+                                "stream": True
+                            }
+                            if sample_seed is not None:
+                                payload["seed"] = sample_seed
+                            response = requests.post(driver.url, headers=headers, json=payload, timeout=120, stream=True)
+                            response.raise_for_status()
                             
-                        messages.append(msg)
-                        messages.append({"role": "user", "content": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."})
+                            has_started_reasoning = False
+                            has_started_content = False
+                            chunk_text = ""
+                            
+                            for line in response.iter_lines():
+                                if not line:
+                                    continue
+                                line_str = line.decode("utf-8").strip()
+                                if line_str.startswith("data: "):
+                                    data_content = line_str[6:]
+                                    if data_content == "[DONE]":
+                                        break
+                                    try:
+                                        chunk = json.loads(data_content)
+                                        choices = chunk.get("choices", [])
+                                        if choices:
+                                            delta = choices[0].get("delta", {})
+                                            
+                                            reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+                                            if reasoning:
+                                                if not has_started_reasoning:
+                                                    sys.stdout.write("\n[LLM Reasoning]: ")
+                                                    sys.stdout.flush()
+                                                    has_started_reasoning = True
+                                                sys.stdout.write(reasoning)
+                                                sys.stdout.flush()
+                                                
+                                            content = delta.get("content") or ""
+                                            if content:
+                                                if not has_started_content:
+                                                    sys.stdout.write("\n[LLM Response]: ")
+                                                    sys.stdout.flush()
+                                                    has_started_content = True
+                                                chunk_text += content
+                                                sys.stdout.write(content)
+                                                sys.stdout.flush()
+                                    except Exception:
+                                        pass
+                            print()
+                            raw_text += chunk_text
+                            interactions_trace.append({"type": "text", "content": chunk_text})
+                            logger.info(f"  [No-MCP] Turn {turn+1}/5: Received response ({len(chunk_text)} chars).")
+                            
+                            if "```json" in raw_text and parse_json_from_response(raw_text):
+                                logger.info("  [No-MCP] Found valid JSON results block. Ending early.")
+                                break
+                                
+                            msg = {"role": "assistant", "content": chunk_text}
+                            messages.append(msg)
+                            messages.append({"role": "user", "content": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."})
+                        else:
+                            logger.info(f"  [No-MCP] Turn {turn+1}/5: Requesting LLM...")
+                            payload = {
+                                "model": driver.model_name,
+                                "messages": messages,
+                                "temperature": driver.temperature,
+                                "max_tokens": 8192
+                            }
+                            if sample_seed is not None:
+                                payload["seed"] = sample_seed
+                            response = requests.post(driver.url, headers=headers, json=payload, timeout=120)
+                            response.raise_for_status()
+                            response_json = response.json()
+                            choices = response_json.get("choices", [])
+                            if not choices:
+                                logger.info(f"  [No-MCP] Turn {turn+1}/5: No choices returned.")
+                                break
+                            msg = choices[0].get("message", {})
+                            text = msg.get("content", "") or ""
+                            raw_text += text
+                            interactions_trace.append({"type": "text", "content": text})
+                            logger.info(f"  [No-MCP] Turn {turn+1}/5: Received response ({len(text)} chars).")
+                            
+                            if "```json" in raw_text and parse_json_from_response(raw_text):
+                                logger.info("  [No-MCP] Found valid JSON results block. Ending early.")
+                                break
+                                
+                            messages.append(msg)
+                            messages.append({"role": "user", "content": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."})
                 else:
                     # Mock driver fallback
                     raw_text = driver.generate(prompt, SYSTEM_INSTRUCTION, seed=sample_seed)
@@ -643,20 +843,20 @@ def run_evaluation_for_mode(
                     logger.info(f"\n==================== [VERBOSE] MCP Tool Call Trace (MCP={with_mcp}, Sample={i}) ====================\n{json.dumps(tool_calls, indent=2)}\n=======================================================================================\n")
                 
             parsed_data = parse_json_from_response(raw_text)
-            if parsed_data and "steadyState" in parsed_data and "transientResult" in parsed_data:
-                steady_state = float(parsed_data["steadyState"])
-                transient_result = parsed_data["transientResult"]
+            if parsed_data:
+                steady_state = clean_nan(parsed_data.get("steadyState", float('nan')))
+                transient_result = parsed_data.get("transientResult", [])
                 success = True
-            else:
-                error_msg = "Output JSON format was invalid or fields are missing."
+                
         except Exception as e:
-            error_msg = f"{type(e).__name__}: {e}"
+            error_msg = str(e)
             error_type = type(e).__name__
             logger.error(f"Error executing run: {e}")
+            traceback.print_exc()
             
         latency = time.time() - start_time
         
-        # Check correctness and compute error metrics per sample
+        # Check correctness on LLM-reported metrics (Functional correctness)
         correct = False
         steady_error = float('nan')
         mae, rmse = float('nan'), float('nan')
@@ -695,9 +895,9 @@ def run_evaluation_for_mode(
                 mcp_graph_direct = direct_graph_res if isinstance(direct_graph_res, dict) else None
                 
                 if mcp_curve_direct:
-                    semantic_mae, semantic_rmse = compute_curve_metrics(baseline["transientResult"], mcp_curve_direct)
+                     semantic_mae, semantic_rmse = compute_curve_metrics(baseline["transientResult"], mcp_curve_direct)
                 if not np.isnan(mcp_steady_direct):
-                    semantic_steady_error = compute_steady_state_error(baseline["steadyState"], mcp_steady_direct)
+                     semantic_steady_error = compute_steady_state_error(baseline["steadyState"], mcp_steady_direct)
                     
                 semantic_modeling_correct = is_solution_correct(
                     base_steady=baseline["steadyState"],
@@ -708,9 +908,9 @@ def run_evaluation_for_mode(
 
                 if mcp_graph_direct and baseline.get("groundTruthGraph"):
                     structural_modeling_correct = are_petri_nets_isomorphic(mcp_graph_direct, baseline["groundTruthGraph"])
-            except Exception as ex:
-                logger.warning(f"Failed to execute direct solver or graph export on active MCP STPN model: {ex}")
-
+            except Exception as e:
+                logger.error(f"Error extracting metrics directly from STPN model: {e}")
+                
         sample_dict = {
             "run_index": i,
             "raw_text": raw_text,
@@ -719,9 +919,9 @@ def run_evaluation_for_mode(
             "success": success,
             "parsed_data": parsed_data,
             "steady_state": steady_state,
-            "steady_error": steady_error,
-            "mae": mae,
-            "rmse": rmse,
+            "steady_error": steady_error if success else float('nan'),
+            "mae": mae if success else float('nan'),
+            "rmse": rmse if success else float('nan'),
             "transient_result": transient_result,
             "correct": correct,
             "latency_seconds": latency,
@@ -740,6 +940,8 @@ def run_evaluation_for_mode(
             sample_dict["mcp_curve_direct"] = mcp_curve_direct
 
         samples.append(sample_dict)
+        if tracker:
+            tracker.complete_sample()
         
     executable_rate = float(sum(1 for s in samples if s["success"])) / num_samples
     return samples, executable_rate, correct_count
@@ -829,11 +1031,6 @@ def ensure_project_built(workspace_path: str) -> None:
             )
 
 def main():
-    def clean_nan(val):
-        if isinstance(val, (int, float)) and np.isnan(val):
-            return None
-        return val
-
     parser = argparse.ArgumentParser(description="Fault Tree Quantitative Analysis Benchmarking Orchestrator")
     parser.add_argument("--config", default="test_cases_example.json", help="Path to input test cases configuration JSON")
     parser.add_argument("--api-key", default=None, help="Gemini API Key (Google AI Studio)")
@@ -848,6 +1045,7 @@ def main():
     parser.add_argument("--mcp-mode", default="mock", choices=["mock", "stdio", "sse"], help="MCP server connection mode")
     parser.add_argument("--sse-url", default="http://localhost:8081/sse", help="MCP server SSE URL (when mcp-mode is sse)")
     parser.add_argument("--verbose-interactions", action="store_true", help="Print detailed LLM prompts, responses, and tool calls to console during execution")
+    parser.add_argument("--stream", action="store_true", help="Enable real-time streaming of LLM reasoning and content response to stdout")
     parser.add_argument("--temperature", type=float, default=0.0, help="Temperature for LLM generation")
     parser.add_argument("--reasoning-effort", default="medium", choices=["low", "medium", "high", "xhigh", "max"])
     parser.add_argument("--max-agentic-turn", type=int, default=100, help="Maximum number of turns for the agent loop")
@@ -940,6 +1138,9 @@ def main():
             
         logger.info(f"Loaded {len(cases)} test cases from config.")
         
+        total_evals = len(cases) * args.samples * 2
+        tracker = ProgressTracker(total_evals)
+        
         report_data = []
         interaction_history = []
         
@@ -977,7 +1178,10 @@ def main():
                 num_samples=args.samples,
                 verbose_interactions=args.verbose_interactions,
                 max_turns=args.max_agentic_turn,
-                base_seed=config_data.get("seed")
+                base_seed=config_data.get("seed"),
+                tracker=tracker,
+                case_id=case_id,
+                stream=args.stream
             )
             no_mcp_pass_k = compute_pass_at_k(args.samples, no_mcp_correct_count, args.k)
             
@@ -1004,7 +1208,10 @@ def main():
                 num_samples=args.samples,
                 verbose_interactions=args.verbose_interactions,
                 max_turns=args.max_agentic_turn,
-                base_seed=config_data.get("seed")
+                base_seed=config_data.get("seed"),
+                tracker=tracker,
+                case_id=case_id,
+                stream=args.stream
             )
             mcp_pass_k = compute_pass_at_k(args.samples, mcp_correct_count, args.k)
             
