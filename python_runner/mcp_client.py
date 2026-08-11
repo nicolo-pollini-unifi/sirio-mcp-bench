@@ -700,7 +700,7 @@ class SirioMCPRealClient(BaseMCPClient):
                 "function": {
                     "name": tool.name,
                     "description": tool.description,
-                    "parameters": tool.inputSchema
+                    "parameters": getattr(tool, "inputSchema", getattr(tool, "input_schema", {}))
                 }
             })
         return openai_tools
