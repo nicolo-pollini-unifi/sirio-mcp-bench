@@ -50,6 +50,7 @@ __pycache__/
 
 ### Java dependencies ###
 classpath.txt
+sirio_mcp_server.log
 
 ### Environment variables ###
 .env
