@@ -20,6 +20,7 @@ load_dotenv()
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+logging.getLogger("mcp.client.sse").setLevel(logging.CRITICAL)
 
 from llm_client import GeminiDriver, OpenAICompatibleDriver, LLMDriver, MockLLMDriver
 from llm_adapters import GeminiAdapter, OpenAIAdapter
