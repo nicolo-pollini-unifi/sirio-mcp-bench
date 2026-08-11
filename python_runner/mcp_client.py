@@ -640,7 +640,11 @@ class SirioMCPRealClient(BaseMCPClient):
                         f"--server.port={port}"
                     ]
                     logger.info(f"SSE Java server is not running. Launching in background on port {port}...")
-                    self.sse_process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    log_file_path = "sirio_mcp_server.log"
+                    log_file = open(log_file_path, "w", encoding="utf-8")
+                    self.exit_stack.callback(log_file.close)
+                    
+                    self.sse_process = subprocess.Popen(args, stdout=log_file, stderr=log_file)
                     
                     logger.info("Waiting for SSE Java server to boot up and open port...")
                     boot_success = False
@@ -654,7 +658,17 @@ class SirioMCPRealClient(BaseMCPClient):
                             await asyncio.sleep(0.5)
                             
                     if not boot_success:
-                        logger.warning("SSE Java server did not open port in time. Attempting connection anyway...")
+                        return_code = self.sse_process.poll()
+                        if return_code is not None:
+                            try:
+                                with open(log_file_path, "r", encoding="utf-8") as lf:
+                                    errors = lf.read()
+                                logger.error(f"SSE Java server exited immediately with code {return_code}. Startup logs:\n{errors}")
+                            except Exception:
+                                logger.error(f"SSE Java server exited immediately with code {return_code}.")
+                            raise RuntimeError(f"SSE Java server failed to start (exit code {return_code}). Check {log_file_path} for details.")
+                        else:
+                            logger.warning("SSE Java server did not open port in time. Attempting connection anyway...")
                 elif not is_active and not self.classpath:
                     logger.warning("SSE Java server is not running and no classpath was provided to start it.")
                     

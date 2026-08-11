@@ -777,9 +777,56 @@ def generate_comparative_plots(
     plt.grid(True, linestyle=":", alpha=0.6)
     plt.legend()
     
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    plt.savefig(output_path, dpi=150)
-    plt.close()
+def ensure_project_built(workspace_path: str) -> None:
+    """
+    Checks if classpath.txt exists and contains valid paths.
+    If not, compiles the project and generates classpath.txt automatically via Maven.
+    """
+    classpath_file = os.path.join(workspace_path, "classpath.txt")
+    should_build = not os.path.exists(classpath_file)
+    
+    if not should_build:
+        try:
+            with open(classpath_file, 'r', encoding='utf-8') as f:
+                content = f.read().strip()
+            if content:
+                # Check if the first dependency path in the classpath actually exists
+                parts = content.split(";" if sys.platform.startswith("win") else ":")
+                if parts and not os.path.exists(parts[0]):
+                    logger.info("Detected invalid paths in classpath.txt (likely generated on a different machine).")
+                    should_build = True
+            else:
+                should_build = True
+        except Exception:
+            should_build = True
+
+    if should_build:
+        logger.info("Compiling project and generating classpath.txt automatically via Maven...")
+        import subprocess
+        try:
+            # Compile target classes and generate classpath.txt
+            subprocess.run(
+                ["mvn", "compile", "dependency:build-classpath", "-Dmdep.outputFile=classpath.txt"],
+                cwd=workspace_path,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            # Build TestCaseGenerator assembly package
+            subprocess.run(
+                ["mvn", "package", "-DskipTests"],
+                cwd=workspace_path,
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            logger.info("Project built successfully. Generated classpath.txt.")
+        except Exception as e:
+            logger.warning(
+                f"Failed to build the project automatically via Maven: {e}.\n"
+                "Please make sure Maven (mvn) and Java Development Kit (JDK) are installed and configured on your PATH,\n"
+                "and run 'mvn compile dependency:build-classpath -Dmdep.outputFile=classpath.txt' manually."
+            )
 
 def main():
     def clean_nan(val):
@@ -824,6 +871,8 @@ def main():
     workspace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     output_dir = os.path.abspath(args.output_dir)
     os.makedirs(output_dir, exist_ok=True)
+    
+    ensure_project_built(workspace_path)
     
     # Initialize LLM drivers
     if args.provider == "gemini":
