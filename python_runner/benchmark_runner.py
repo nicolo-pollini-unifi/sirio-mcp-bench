@@ -332,6 +332,7 @@ def execute_agent_loop(driver: LLMDriver, mcp_client: BaseMCPClient, prompt: str
         try:
             try:
                 url, headers, payload = adapter.build_request()
+                logger.info(f"  [MCP] Turn {turn+1}/{max_turns}: Requesting LLM (this may take a while for reasoning models)...")
                 if stream and isinstance(driver, OpenAICompatibleDriver):
                     payload["stream"] = True
                     response = requests.post(url, headers=headers, json=payload, timeout=600, stream=True)
@@ -760,7 +761,7 @@ def run_evaluation_for_mode(
                     history = [{"role": "user", "parts": [{"text": prompt}]}]
                     raw_text = ""
                     for turn in range(5):
-                        logger.info(f"  [No-MCP] Turn {turn+1}/5: Requesting LLM...")
+                        logger.info(f"  [No-MCP] Turn {turn+1}/5: Requesting LLM (this may take a while for reasoning models)...")
                         gen_config = {"temperature": driver.temperature, "maxOutputTokens": 8192}
                         if sample_seed is not None:
                             gen_config["seed"] = sample_seed
@@ -867,7 +868,7 @@ def run_evaluation_for_mode(
                             messages.append(msg)
                             messages.append({"role": "user", "content": "Your previous response was truncated. Please continue generating the JSON results block exactly from where you left off."})
                         else:
-                            logger.info(f"  [No-MCP] Turn {turn+1}/5: Requesting LLM...")
+                            logger.info(f"  [No-MCP] Turn {turn+1}/5: Requesting LLM (this may take a while for reasoning models)...")
                             payload = {
                                 "model": driver.model_name,
                                 "messages": messages,
