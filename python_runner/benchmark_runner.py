@@ -809,6 +809,7 @@ def run_evaluation_for_mode(
                                 "max_tokens": 8192,
                                 "stream": True
                             }
+                            driver.add_thinking_params(payload)
                             if sample_seed is not None:
                                 payload["seed"] = sample_seed
                             response = requests.post(driver.url, headers=headers, json=payload, timeout=120, stream=True)
@@ -872,6 +873,7 @@ def run_evaluation_for_mode(
                                 "temperature": driver.temperature,
                                 "max_tokens": 8192
                             }
+                            driver.add_thinking_params(payload)
                             if sample_seed is not None:
                                 payload["seed"] = sample_seed
                             response = requests.post(driver.url, headers=headers, json=payload, timeout=120)

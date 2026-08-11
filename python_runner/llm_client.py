@@ -113,6 +113,20 @@ class OpenAICompatibleDriver(LLMDriver):
         self.timeout = timeout
         self.url = f"{self.base_url}/chat/completions"
 
+    def add_thinking_params(self, payload: dict):
+        if not self.enable_thinking:
+            return
+        
+        # 1. Standard OpenAI 'reasoning_effort'
+        if self.reasoning in ["low", "medium", "high"]:
+            payload["reasoning_effort"] = self.reasoning
+        elif self.reasoning in ["xhigh", "max"]:
+            payload["reasoning_effort"] = "high"
+            
+        # 2. DeepSeek / OpenRouter / vLLM / Ollama standard 'max_thinking_tokens'
+        if self.reasoning_budget > 0:
+            payload["max_thinking_tokens"] = self.reasoning_budget
+
     def generate(self, prompt: str, system_instruction: Optional[str] = None, seed: Optional[int] = None) -> str:
         headers = {
             "Content-Type": "application/json",
@@ -131,6 +145,7 @@ class OpenAICompatibleDriver(LLMDriver):
             "temperature": self.temperature,
             "max_tokens": 4096
         }
+        self.add_thinking_params(payload)
         if seed is not None:
             payload["seed"] = seed
 

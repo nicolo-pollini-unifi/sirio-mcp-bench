@@ -115,6 +115,7 @@ class OpenAIAdapter:
             "temperature": self.driver.temperature,
             "max_tokens": 8192
         }
+        self.driver.add_thinking_params(payload)
         if self.tools:
             payload["tools"] = self.tools
         if self.seed is not None:
