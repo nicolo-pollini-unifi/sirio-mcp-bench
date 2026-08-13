@@ -168,8 +168,10 @@ class MockLLMDriver(LLMDriver):
     Mock LLM driver that simulates response generation without calling external APIs.
     Useful for testing and verification of the benchmarking workflow.
     """
-    def __init__(self, baseline_data: Optional[Dict[str, Any]] = None):
+    def __init__(self, baseline_data: Optional[Dict[str, Any]] = None, temperature: float = 0.0, model_name: str = "mock"):
         self.baseline_data = baseline_data
+        self.temperature = temperature
+        self.model_name = model_name
 
     def generate(self, prompt: str, system_instruction: Optional[str] = None, seed: Optional[int] = None) -> str:
         # Returns a simulated chain of thought followed by the JSON block containing baseline data
