@@ -129,7 +129,176 @@ def save_report_data_json(report_data: List[Dict[str, Any]], output_root: str, t
         json.dump(report_data, f, ensure_ascii=False, indent=2)
 
     logger.info("Saved report_data JSON to %s", report_path)
+    
+    # Automatically compute and save academic summary
+    try:
+        save_report_summary_json(report_data, report_dir)
+    except Exception as e:
+        logger.error(f"Failed to generate automatic report summary: {e}")
+        traceback.print_exc()
+
     return report_path
+
+def save_report_summary_json(report_data: List[Dict[str, Any]], report_dir: str):
+    """Calculates and saves the aggregated academic summary metrics from the report data."""
+    import math
+    num_cases = len(report_data)
+    if num_cases == 0:
+        return
+
+    # Count samples per case
+    samples_per_case = len(report_data[0]['no_mcp']['samples'])
+    total_samples = num_cases * samples_per_case
+
+    no_mcp_success_count = 0
+    no_mcp_correct_count = 0
+    no_mcp_maes = []
+    no_mcp_steady_errors = []
+    no_mcp_p2_cases = []
+    no_mcp_p5_cases = []
+
+    mcp_success_count = 0
+    mcp_correct_count = 0
+    mcp_maes = []
+    mcp_steady_errors = []
+    mcp_p2_cases = []
+    mcp_p5_cases = []
+
+    mcp_mod_success_count = 0
+    mcp_mod_correct_count = 0
+    mcp_mod_maes = []
+    mcp_mod_steady_errors = []
+    mcp_mod_p2_cases = []
+    mcp_mod_p5_cases = []
+
+    def local_clean_nan(val):
+        if val is None or (isinstance(val, float) and (np.isnan(val) or np.isinf(val))):
+            return None
+        return float(val)
+
+    for c in report_data:
+        # --- NO MCP ---
+        no_mcp_s = c['no_mcp']['samples']
+        c_no_mcp_correct = sum(1 for s in no_mcp_s if s['correct'])
+        no_mcp_correct_count += c_no_mcp_correct
+        no_mcp_p2_cases.append(compute_pass_at_k(samples_per_case, c_no_mcp_correct, 2))
+        no_mcp_p5_cases.append(compute_pass_at_k(samples_per_case, c_no_mcp_correct, 5))
+        
+        for s in no_mcp_s:
+            if s['success']:
+                no_mcp_success_count += 1
+                mae = local_clean_nan(s.get('mae'))
+                if mae is not None:
+                    no_mcp_maes.append(mae)
+                ste = local_clean_nan(s.get('steady_error'))
+                if ste is not None:
+                    no_mcp_steady_errors.append(ste)
+
+        # --- MCP FUNCTIONAL ---
+        mcp_s = c['mcp']['samples']
+        c_mcp_correct = sum(1 for s in mcp_s if s['correct'])
+        mcp_correct_count += c_mcp_correct
+        mcp_p2_cases.append(compute_pass_at_k(samples_per_case, c_mcp_correct, 2))
+        mcp_p5_cases.append(compute_pass_at_k(samples_per_case, c_mcp_correct, 5))
+        
+        for s in mcp_s:
+            if s['success']:
+                mcp_success_count += 1
+                mae = local_clean_nan(s.get('mae'))
+                if mae is not None:
+                    mcp_maes.append(mae)
+                ste = local_clean_nan(s.get('steady_error'))
+                if ste is not None:
+                    mcp_steady_errors.append(ste)
+
+        # --- MCP MODELING ---
+        c_mcp_mod_correct = sum(1 for s in mcp_s if s.get('modeling_correctness', False))
+        mcp_mod_correct_count += c_mcp_mod_correct
+        mcp_mod_p2_cases.append(compute_pass_at_k(samples_per_case, c_mcp_mod_correct, 2))
+        mcp_mod_p5_cases.append(compute_pass_at_k(samples_per_case, c_mcp_mod_correct, 5))
+        
+        for s in mcp_s:
+            sem_ste = local_clean_nan(s.get('semantic_steady_error'))
+            sem_mae = local_clean_nan(s.get('semantic_mae'))
+            if sem_ste is not None or sem_mae is not None:
+                mcp_mod_success_count += 1
+                if sem_mae is not None:
+                    mcp_mod_maes.append(sem_mae)
+                if sem_ste is not None:
+                    mcp_mod_steady_errors.append(sem_ste)
+
+    def get_avg_and_std(arr):
+        if not arr:
+            return 0.0, 0.0
+        return float(np.mean(arr)), float(np.std(arr))
+
+    no_mcp_avg_mae, no_mcp_std_mae = get_avg_and_std(no_mcp_maes)
+    no_mcp_avg_ste, no_mcp_std_ste = get_avg_and_std(no_mcp_steady_errors)
+
+    mcp_avg_mae, mcp_std_mae = get_avg_and_std(mcp_maes)
+    mcp_avg_ste, mcp_std_ste = get_avg_and_std(mcp_steady_errors)
+
+    mcp_mod_avg_mae, mcp_mod_std_mae = get_avg_and_std(mcp_mod_maes)
+    mcp_mod_avg_ste, mcp_mod_std_ste = get_avg_and_std(mcp_mod_steady_errors)
+
+    results = {
+        "metadata": {
+            "num_cases": num_cases,
+            "samples_per_case": samples_per_case,
+            "total_samples": total_samples
+        },
+        "no_mcp": {
+            "success_rate": no_mcp_success_count / total_samples,
+            "pass_1": no_mcp_correct_count / total_samples,
+            "pass_2": float(np.mean(no_mcp_p2_cases)),
+            "pass_5": float(np.mean(no_mcp_p5_cases)),
+            "avg_mae": no_mcp_avg_mae,
+            "std_mae": no_mcp_std_mae,
+            "avg_steady_error": no_mcp_avg_ste,
+            "std_steady_error": no_mcp_std_ste
+        },
+        "mcp_functional": {
+            "success_rate": mcp_success_count / total_samples,
+            "pass_1": mcp_correct_count / total_samples,
+            "pass_2": float(np.mean(mcp_p2_cases)),
+            "pass_5": float(np.mean(mcp_p5_cases)),
+            "avg_mae": mcp_avg_mae,
+            "std_mae": mcp_std_mae,
+            "avg_steady_error": mcp_avg_ste,
+            "std_steady_error": mcp_std_ste
+        },
+        "mcp_modeling": {
+            "success_rate": mcp_mod_success_count / total_samples,
+            "pass_1": mcp_mod_correct_count / total_samples,
+            "pass_2": float(np.mean(mcp_mod_p2_cases)),
+            "pass_5": float(np.mean(mcp_mod_p5_cases)),
+            "avg_mae": mcp_mod_avg_mae,
+            "std_mae": mcp_mod_std_mae,
+            "avg_steady_error": mcp_mod_avg_ste,
+            "std_steady_error": mcp_mod_std_ste
+        }
+    }
+
+    # Print to console
+    logger.info("\n" + "="*80)
+    logger.info(" ACADEMIC BENCHMARK SUMMARY")
+    logger.info("="*80)
+    logger.info(f"Total Cases: {num_cases} | Samples per Case: {samples_per_case} | Total Runs: {total_samples}")
+    logger.info("-"*80)
+    logger.info(f"{'Metric':<25} | {'No-MCP':<15} | {'MCP (Func)':<15} | {'MCP (Model)':<15}")
+    logger.info("-"*80)
+    logger.info(f"{'Success/Exec Rate':<25} | {results['no_mcp']['success_rate']:<15.2%} | {results['mcp_functional']['success_rate']:<15.2%} | {results['mcp_modeling']['success_rate']:<15.2%}")
+    logger.info(f"{'Pass@1 Accuracy':<25} | {results['no_mcp']['pass_1']:<15.2%} | {results['mcp_functional']['pass_1']:<15.2%} | {results['mcp_modeling']['pass_1']:<15.2%}")
+    logger.info(f"{'Pass@2 Accuracy':<25} | {results['no_mcp']['pass_2']:<15.2%} | {results['mcp_functional']['pass_2']:<15.2%} | {results['mcp_modeling']['pass_2']:<15.2%}")
+    logger.info(f"{'Pass@5 Accuracy':<25} | {results['no_mcp']['pass_5']:<15.2%} | {results['mcp_functional']['pass_5']:<15.2%} | {results['mcp_modeling']['pass_5']:<15.2%}")
+    logger.info(f"{'Average Transient MAE':<25} | {results['no_mcp']['avg_mae']:<15.4e} | {results['mcp_functional']['avg_mae']:<15.4e} | {results['mcp_modeling']['avg_mae']:<15.4e}")
+    logger.info(f"{'Average Steady Error':<25} | {results['no_mcp']['avg_steady_error']:<15.4e} | {results['mcp_functional']['avg_steady_error']:<15.4e} | {results['mcp_modeling']['avg_steady_error']:<15.4e}")
+    logger.info("="*80)
+
+    summary_path = os.path.join(report_dir, "report_summary.json")
+    with open(summary_path, "w", encoding="utf-8") as sf:
+        json.dump(results, sf, indent=2)
+    logger.info(f"Summary JSON automatically saved to: {summary_path}")
 
 def run_java_baseline(workspace_path: str, case_json_path: str, case_id: str) -> Dict[str, Any]:
     """
