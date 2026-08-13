@@ -150,26 +150,45 @@ def save_report_summary_json(report_data: List[Dict[str, Any]], report_dir: str)
     samples_per_case = len(report_data[0]['no_mcp']['samples'])
     total_samples = num_cases * samples_per_case
 
+    # Arrays for standard deviations across all runs
+    no_mcp_run_correctness = []
+    mcp_run_correctness = []
+    mcp_mod_run_correctness = []
+
+    # Arrays for metrics
     no_mcp_success_count = 0
-    no_mcp_correct_count = 0
     no_mcp_maes = []
+    no_mcp_rmses = []
     no_mcp_steady_errors = []
+    no_mcp_latencies = []
+    no_mcp_turns_exceeded_count = 0
+    no_mcp_case_pass_rates = []
     no_mcp_p2_cases = []
     no_mcp_p5_cases = []
 
     mcp_success_count = 0
-    mcp_correct_count = 0
     mcp_maes = []
+    mcp_rmses = []
     mcp_steady_errors = []
+    mcp_latencies = []
+    mcp_turns_exceeded_count = 0
+    mcp_case_pass_rates = []
     mcp_p2_cases = []
     mcp_p5_cases = []
 
     mcp_mod_success_count = 0
-    mcp_mod_correct_count = 0
     mcp_mod_maes = []
+    mcp_mod_rmses = []
     mcp_mod_steady_errors = []
+    mcp_mod_case_pass_rates = []
     mcp_mod_p2_cases = []
     mcp_mod_p5_cases = []
+
+    # MCP structural details
+    mcp_isomorphism_count = 0
+    mcp_alternative_count = 0
+    mcp_tool_ignored_count = 0
+    mcp_failure_count = 0
 
     def local_clean_nan(val):
         if val is None or (isinstance(val, float) and (np.isnan(val) or np.isinf(val))):
@@ -180,50 +199,83 @@ def save_report_summary_json(report_data: List[Dict[str, Any]], report_dir: str)
         # --- NO MCP ---
         no_mcp_s = c['no_mcp']['samples']
         c_no_mcp_correct = sum(1 for s in no_mcp_s if s['correct'])
-        no_mcp_correct_count += c_no_mcp_correct
+        no_mcp_case_pass_rates.append(c_no_mcp_correct / samples_per_case)
         no_mcp_p2_cases.append(compute_pass_at_k(samples_per_case, c_no_mcp_correct, 2))
         no_mcp_p5_cases.append(compute_pass_at_k(samples_per_case, c_no_mcp_correct, 5))
         
         for s in no_mcp_s:
+            no_mcp_run_correctness.append(1.0 if s['correct'] else 0.0)
+            no_mcp_latencies.append(s['latency_seconds'])
+            if s.get('max_turns_exceeded', False):
+                no_mcp_turns_exceeded_count += 1
             if s['success']:
                 no_mcp_success_count += 1
                 mae = local_clean_nan(s.get('mae'))
                 if mae is not None:
                     no_mcp_maes.append(mae)
+                rmse = local_clean_nan(s.get('rmse'))
+                if rmse is not None:
+                    no_mcp_rmses.append(rmse)
                 ste = local_clean_nan(s.get('steady_error'))
                 if ste is not None:
                     no_mcp_steady_errors.append(ste)
 
-        # --- MCP FUNCTIONAL ---
+        # --- MCP ---
         mcp_s = c['mcp']['samples']
         c_mcp_correct = sum(1 for s in mcp_s if s['correct'])
-        mcp_correct_count += c_mcp_correct
+        mcp_case_pass_rates.append(c_mcp_correct / samples_per_case)
         mcp_p2_cases.append(compute_pass_at_k(samples_per_case, c_mcp_correct, 2))
         mcp_p5_cases.append(compute_pass_at_k(samples_per_case, c_mcp_correct, 5))
+
+        c_mcp_mod_correct = sum(1 for s in mcp_s if s.get('modeling_correctness', False))
+        mcp_mod_case_pass_rates.append(c_mcp_mod_correct / samples_per_case)
+        mcp_mod_p2_cases.append(compute_pass_at_k(samples_per_case, c_mcp_mod_correct, 2))
+        mcp_mod_p5_cases.append(compute_pass_at_k(samples_per_case, c_mcp_mod_correct, 5))
         
         for s in mcp_s:
+            mcp_run_correctness.append(1.0 if s['correct'] else 0.0)
+            mcp_mod_run_correctness.append(1.0 if s.get('modeling_correctness', False) else 0.0)
+            mcp_latencies.append(s['latency_seconds'])
+            if s.get('max_turns_exceeded', False):
+                mcp_turns_exceeded_count += 1
+                
+            # Classify MCP structural results
+            mod_correct = s.get('modeling_correctness', False)
+            mod_iso = s.get('modeling_isomorphism', False)
+            func_correct = s['correct']
+            
+            if mod_correct:
+                if mod_iso:
+                    mcp_isomorphism_count += 1
+                else:
+                    mcp_alternative_count += 1
+                if not func_correct:
+                    mcp_tool_ignored_count += 1
+            else:
+                mcp_failure_count += 1
+
             if s['success']:
                 mcp_success_count += 1
                 mae = local_clean_nan(s.get('mae'))
                 if mae is not None:
                     mcp_maes.append(mae)
+                rmse = local_clean_nan(s.get('rmse'))
+                if rmse is not None:
+                    mcp_rmses.append(rmse)
                 ste = local_clean_nan(s.get('steady_error'))
                 if ste is not None:
                     mcp_steady_errors.append(ste)
 
-        # --- MCP MODELING ---
-        c_mcp_mod_correct = sum(1 for s in mcp_s if s.get('modeling_correctness', False))
-        mcp_mod_correct_count += c_mcp_mod_correct
-        mcp_mod_p2_cases.append(compute_pass_at_k(samples_per_case, c_mcp_mod_correct, 2))
-        mcp_mod_p5_cases.append(compute_pass_at_k(samples_per_case, c_mcp_mod_correct, 5))
-        
-        for s in mcp_s:
+            # Modeling metrics (semantic calculation via direct python call on JVM model)
             sem_ste = local_clean_nan(s.get('semantic_steady_error'))
             sem_mae = local_clean_nan(s.get('semantic_mae'))
+            sem_rmse = local_clean_nan(s.get('semantic_rmse'))
             if sem_ste is not None or sem_mae is not None:
                 mcp_mod_success_count += 1
                 if sem_mae is not None:
                     mcp_mod_maes.append(sem_mae)
+                if sem_rmse is not None:
+                    mcp_mod_rmses.append(sem_rmse)
                 if sem_ste is not None:
                     mcp_mod_steady_errors.append(sem_ste)
 
@@ -233,12 +285,15 @@ def save_report_summary_json(report_data: List[Dict[str, Any]], report_dir: str)
         return float(np.mean(arr)), float(np.std(arr))
 
     no_mcp_avg_mae, no_mcp_std_mae = get_avg_and_std(no_mcp_maes)
+    no_mcp_avg_rmse, no_mcp_std_rmse = get_avg_and_std(no_mcp_rmses)
     no_mcp_avg_ste, no_mcp_std_ste = get_avg_and_std(no_mcp_steady_errors)
 
     mcp_avg_mae, mcp_std_mae = get_avg_and_std(mcp_maes)
+    mcp_avg_rmse, mcp_std_rmse = get_avg_and_std(mcp_rmses)
     mcp_avg_ste, mcp_std_ste = get_avg_and_std(mcp_steady_errors)
 
     mcp_mod_avg_mae, mcp_mod_std_mae = get_avg_and_std(mcp_mod_maes)
+    mcp_mod_avg_rmse, mcp_mod_std_rmse = get_avg_and_std(mcp_mod_rmses)
     mcp_mod_avg_ste, mcp_mod_std_ste = get_avg_and_std(mcp_mod_steady_errors)
 
     results = {
@@ -249,51 +304,84 @@ def save_report_summary_json(report_data: List[Dict[str, Any]], report_dir: str)
         },
         "no_mcp": {
             "success_rate": no_mcp_success_count / total_samples,
-            "pass_1": no_mcp_correct_count / total_samples,
+            "pass_1": float(np.mean(no_mcp_run_correctness)),
+            "pass_1_std_runs": float(np.std(no_mcp_run_correctness)),
+            "pass_1_std_cases": float(np.std(no_mcp_case_pass_rates)),
             "pass_2": float(np.mean(no_mcp_p2_cases)),
             "pass_5": float(np.mean(no_mcp_p5_cases)),
             "avg_mae": no_mcp_avg_mae,
             "std_mae": no_mcp_std_mae,
+            "avg_rmse": no_mcp_avg_rmse,
+            "std_rmse": no_mcp_std_rmse,
             "avg_steady_error": no_mcp_avg_ste,
-            "std_steady_error": no_mcp_std_ste
+            "std_steady_error": no_mcp_std_ste,
+            "avg_latency": float(np.mean(no_mcp_latencies)),
+            "std_latency": float(np.std(no_mcp_latencies)),
+            "max_turns_exceeded_rate": no_mcp_turns_exceeded_count / total_samples
         },
         "mcp_functional": {
             "success_rate": mcp_success_count / total_samples,
-            "pass_1": mcp_correct_count / total_samples,
+            "pass_1": float(np.mean(mcp_run_correctness)),
+            "pass_1_std_runs": float(np.std(mcp_run_correctness)),
+            "pass_1_std_cases": float(np.std(mcp_case_pass_rates)),
             "pass_2": float(np.mean(mcp_p2_cases)),
             "pass_5": float(np.mean(mcp_p5_cases)),
             "avg_mae": mcp_avg_mae,
             "std_mae": mcp_std_mae,
+            "avg_rmse": mcp_avg_rmse,
+            "std_rmse": mcp_std_rmse,
             "avg_steady_error": mcp_avg_ste,
-            "std_steady_error": mcp_std_ste
+            "std_steady_error": mcp_std_ste,
+            "avg_latency": float(np.mean(mcp_latencies)),
+            "std_latency": float(np.std(mcp_latencies)),
+            "max_turns_exceeded_rate": mcp_turns_exceeded_count / total_samples,
+            "tool_ignored_error_rate": mcp_tool_ignored_count / total_samples
         },
         "mcp_modeling": {
             "success_rate": mcp_mod_success_count / total_samples,
-            "pass_1": mcp_mod_correct_count / total_samples,
+            "pass_1": float(np.mean(mcp_mod_run_correctness)),
+            "pass_1_std_runs": float(np.std(mcp_mod_run_correctness)),
+            "pass_1_std_cases": float(np.std(mcp_mod_case_pass_rates)),
             "pass_2": float(np.mean(mcp_mod_p2_cases)),
             "pass_5": float(np.mean(mcp_mod_p5_cases)),
             "avg_mae": mcp_mod_avg_mae,
             "std_mae": mcp_mod_std_mae,
+            "avg_rmse": mcp_mod_avg_rmse,
+            "std_rmse": mcp_mod_std_rmse,
             "avg_steady_error": mcp_mod_avg_ste,
-            "std_steady_error": mcp_mod_std_ste
+            "std_steady_error": mcp_mod_std_ste,
+            "avg_latency": float(np.mean(mcp_latencies)),
+            "std_latency": float(np.std(mcp_latencies)),
+            "modeling_isomorphism_rate": mcp_isomorphism_count / total_samples,
+            "alternative_modeling_rate": mcp_alternative_count / total_samples,
+            "modeling_failure_rate": mcp_failure_count / total_samples
         }
     }
 
     # Print to console
-    logger.info("\n" + "="*80)
+    logger.info("\n" + "="*95)
     logger.info(" ACADEMIC BENCHMARK SUMMARY")
-    logger.info("="*80)
+    logger.info("="*95)
     logger.info(f"Total Cases: {num_cases} | Samples per Case: {samples_per_case} | Total Runs: {total_samples}")
-    logger.info("-"*80)
-    logger.info(f"{'Metric':<25} | {'No-MCP':<15} | {'MCP (Func)':<15} | {'MCP (Model)':<15}")
-    logger.info("-"*80)
-    logger.info(f"{'Success/Exec Rate':<25} | {results['no_mcp']['success_rate']:<15.2%} | {results['mcp_functional']['success_rate']:<15.2%} | {results['mcp_modeling']['success_rate']:<15.2%}")
-    logger.info(f"{'Pass@1 Accuracy':<25} | {results['no_mcp']['pass_1']:<15.2%} | {results['mcp_functional']['pass_1']:<15.2%} | {results['mcp_modeling']['pass_1']:<15.2%}")
-    logger.info(f"{'Pass@2 Accuracy':<25} | {results['no_mcp']['pass_2']:<15.2%} | {results['mcp_functional']['pass_2']:<15.2%} | {results['mcp_modeling']['pass_2']:<15.2%}")
-    logger.info(f"{'Pass@5 Accuracy':<25} | {results['no_mcp']['pass_5']:<15.2%} | {results['mcp_functional']['pass_5']:<15.2%} | {results['mcp_modeling']['pass_5']:<15.2%}")
-    logger.info(f"{'Average Transient MAE':<25} | {results['no_mcp']['avg_mae']:<15.4e} | {results['mcp_functional']['avg_mae']:<15.4e} | {results['mcp_modeling']['avg_mae']:<15.4e}")
-    logger.info(f"{'Average Steady Error':<25} | {results['no_mcp']['avg_steady_error']:<15.4e} | {results['mcp_functional']['avg_steady_error']:<15.4e} | {results['mcp_modeling']['avg_steady_error']:<15.4e}")
-    logger.info("="*80)
+    logger.info("-"*95)
+    logger.info(f"{'Metric':<35} | {'No-MCP':<16} | {'MCP (Func)':<16} | {'MCP (Model)':<16}")
+    logger.info("-"*95)
+    logger.info(f"{'Success/Exec Rate':<35} | {results['no_mcp']['success_rate']:<16.2%} | {results['mcp_functional']['success_rate']:<16.2%} | {results['mcp_modeling']['success_rate']:<16.2%}")
+    logger.info(f"{'Pass@1 Accuracy (Mean)':<35} | {results['no_mcp']['pass_1']:<16.2%} | {results['mcp_functional']['pass_1']:<16.2%} | {results['mcp_modeling']['pass_1']:<16.2%}")
+    logger.info(f"{'Pass@1 Std Dev (across runs)':<35} | {results['no_mcp']['pass_1_std_runs']:<16.4f} | {results['mcp_functional']['pass_1_std_runs']:<16.4f} | {results['mcp_modeling']['pass_1_std_runs']:<16.4f}")
+    logger.info(f"{'Pass@1 Std Dev (across cases)':<35} | {results['no_mcp']['pass_1_std_cases']:<16.4f} | {results['mcp_functional']['pass_1_std_cases']:<16.4f} | {results['mcp_modeling']['pass_1_std_cases']:<16.4f}")
+    logger.info(f"{'Pass@2 Accuracy':<35} | {results['no_mcp']['pass_2']:<16.2%} | {results['mcp_functional']['pass_2']:<16.2%} | {results['mcp_modeling']['pass_2']:<16.2%}")
+    logger.info(f"{'Pass@5 Accuracy':<35} | {results['no_mcp']['pass_5']:<16.2%} | {results['mcp_functional']['pass_5']:<16.2%} | {results['mcp_modeling']['pass_5']:<16.2%}")
+    logger.info(f"{'Average Transient MAE':<35} | {results['no_mcp']['avg_mae']:<16.4e} | {results['mcp_functional']['avg_mae']:<16.4e} | {results['mcp_modeling']['avg_mae']:<16.4e}")
+    logger.info(f"{'Average Transient RMSE':<35} | {results['no_mcp']['avg_rmse']:<16.4e} | {results['mcp_functional']['avg_rmse']:<16.4e} | {results['mcp_modeling']['avg_rmse']:<16.4e}")
+    logger.info(f"{'Average Steady Error':<35} | {results['no_mcp']['avg_steady_error']:<16.4e} | {results['mcp_functional']['avg_steady_error']:<16.4e} | {results['mcp_modeling']['avg_steady_error']:<16.4e}")
+    logger.info(f"{'Average Latency (s)':<35} | {results['no_mcp']['avg_latency']:<16.2f} | {results['mcp_functional']['avg_latency']:<16.2f} | {results['mcp_modeling']['avg_latency']:<16.2f}")
+    logger.info(f"{'Max Turns Exceeded Rate':<35} | {results['no_mcp']['max_turns_exceeded_rate']:<16.2%} | {results['mcp_functional']['max_turns_exceeded_rate']:<16.2%} | {'N/A':<16}")
+    logger.info(f"{'Tool Ignored Error Rate':<35} | {'N/A':<16} | {results['mcp_functional']['tool_ignored_error_rate']:<16.2%} | {'N/A':<16}")
+    logger.info(f"{'Modeling Isomorphism Rate':<35} | {'N/A':<16} | {'N/A':<16} | {results['mcp_modeling']['modeling_isomorphism_rate']:<16.2%}")
+    logger.info(f"{'Alternative Modeling Rate':<35} | {'N/A':<16} | {'N/A':<16} | {results['mcp_modeling']['alternative_modeling_rate']:<16.2%}")
+    logger.info(f"{'Modeling Failure Rate':<35} | {'N/A':<16} | {'N/A':<16} | {results['mcp_modeling']['modeling_failure_rate']:<16.2%}")
+    logger.info("="*95)
 
     summary_path = os.path.join(report_dir, "report_summary.json")
     with open(summary_path, "w", encoding="utf-8") as sf:
