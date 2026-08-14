@@ -44,6 +44,10 @@ Integrating Large Language Models (LLMs) into **Model-Driven Engineering (MDE)**
 > **Decoupling Semantic Translation from Deterministic Execution**:
 > Shifting the role of the LLM from an unreliable **"computational calculator"** to a **"semantic translator and planner"** via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) enables delegating formal stochastic calculations to an external, deterministic numerical engine ([SIRIO](https://doi.org/10.1109/TSE.2019.2949806)). This architecture bridges the gap between neural heuristics and mathematical precision in dependability engineering tasks.
 
+> [!WARNING]
+> **Why Plain LLMs Cannot Be Trusted in Dependability Tasks**:
+> Dependability and safety-critical engineering require mathematically certified bounds. In our empirical experiments, plain LLMs systematically hallucinated constant approximations (e.g. repeating $1.0$ across all time steps) or low-degree polynomials that only appear correct by statistical coincidence.
+
 ### The Benchmark Design
 To empirically quantify this paradigm, `sirio-mcp-bench` provides an end-to-end quantitative benchmarking framework on **Stochastic Repairable Fault Trees (FTA)**:
 * **Analytically Exact Ground Truth**: Computes the exact steady-state unavailability $Q(\infty)$ and transient unreliability curve $Q(t)$ over a time horizon $[0, T]$ via automated translation into Stochastic Timed Petri Nets (STPNs) solved with the formal SIRIO numerical engine (regenerative transient analysis without Monte Carlo simulation).
@@ -80,6 +84,8 @@ flowchart TD
     end
 ```
 
+The flowchart above summarizes the entire end-to-end evaluation lifecycle. Starting from a parameterized Fault Tree input, the pipeline simultaneously derives an exact mathematical baseline using SIRIO and evaluates both the plain LLM and the tool-augmented MCP agent across dual evaluation pathways.
+
 ---
 
 ## 2. Key Experimental Findings & Quantitative Results
@@ -90,20 +96,20 @@ The benchmark was evaluated on a stratified dataset of **16 medium-tier Fault Tr
 
 | Metric | No-MCP (Plain LLM) | MCP (Functional / End-to-End) | MCP (Modeling / Reconstruction) |
 | :--- | :---: | :---: | :---: |
-| **Pass@1 ($\text{Mean} \pm \text{Std}$)** | $15.00\% \pm 21.79\%$ | **$63.75\% \pm 35.51\%$** | **$87.50\% \pm 15.61\%$** |
-| **Pass@2** | $25.00\%$ | $76.88\%$ | **$98.13\%$** |
-| **Pass@5** | $43.75\%$ | $81.25\%$ | **$100.00\%$** |
-| **Task Completion Rate** | $97.50\%$ | $66.25\%$ | **$96.25\%$** |
-| **Mean Latency (s)** | $216.9 \pm 160.0$ | $242.3 \pm 87.8$ | $242.3 \pm 87.8$ |
-| **Steady-state MAE** | $0.622 \pm 0.447$ | **$0.0095 \pm 0.048$** | **$0.0130 \pm 0.113$** |
-| **Transient MAE** | $0.346 \pm 0.387$ | **$0.0018 \pm 0.009$** | **$0.0040 \pm 0.019$** |
-| **Transient RMSE** | $0.359 \pm 0.395$ | **$0.0021 \pm 0.010$** | **$0.0126 \pm 0.048$** |
+| **Pass@1 (Mean ± Std)** | 15.00% ± 21.79% | **63.75% ± 35.51%** | **87.50% ± 15.61%** |
+| **Pass@2** | 25.00% | 76.88% | **98.13%** |
+| **Pass@5** | 43.75% | 81.25% | **100.00%** |
+| **Task Completion Rate** | 97.50% | 66.25% | **96.25%** |
+| **Mean Latency (s)** | 216.9 ± 160.0 | 242.3 ± 87.8 | 242.3 ± 87.8 |
+| **Steady-state MAE** | 0.622 ± 0.447 | **0.0095 ± 0.048** | **0.0130 ± 0.113** |
+| **Transient MAE** | 0.346 ± 0.387 | **0.0018 ± 0.009** | **0.0040 ± 0.019** |
+| **Transient RMSE** | 0.359 ± 0.395 | **0.0021 ± 0.010** | **0.0126 ± 0.048** |
 
 ### 2.2 Extended Benchmark Metrics (Produced in `report_summary.json`)
 
 Beyond the high-level metrics published in the 5-page conference paper, the `sirio-mcp-bench` orchestrator generates granular statistical distributions across runs and topological classifications:
 
-```
+```text
 ===============================================================================================
  ACADEMIC BENCHMARK SUMMARY (Extended Output Format)
 ===============================================================================================
@@ -147,6 +153,8 @@ pie title Failure Modes Distribution (Total Functional Failures = 33.75%)
     "Tool Response Error (Connection Timeout)" : 3.7
 ```
 
+The pie chart above illustrates the breakdown of the $33.75\%$ functional failure rate. Notably, over $92\%$ of all failures stem from payload and context size limits rather than semantic reasoning errors.
+
 ### How Each Failure Mode Occurs and How to Recognize It in Logs:
 
 1. **`Bad Request` ($85.2\%$ of failures)**:
@@ -161,6 +169,10 @@ pie title Failure Modes Distribution (Total Functional Failures = 33.75%)
 4. **`Tool Response Error` ($3.7\%$ of failures)**:
    * **Root Cause**: Ephemeral socket drops, JVM memory exhaustion, or network disconnects during SSE HTTP streaming.
    * **Log Signature**: `Connection closed`, `ClosedResourceError()`, or `asyncio.exceptions.TimeoutError`.
+
+> [!TIP]
+> **Mitigating Payload and Context Size Failures in Production**:
+> To scale MCP-augmented MDE pipelines to industrial systems with thousands of states, implement on-demand pagination for solver output vectors, or allow the agent to execute analysis scripts directly in a sandboxed local environment rather than passing raw JSON vectors over multi-turn chat templates.
 
 ---
 
@@ -188,6 +200,8 @@ flowchart TD
     CreateLeaf --> SampleRates["Sample Rates with Random Seed:<br/>λ in [5.0, 30.0] failure/yr<br/>μ in [100.0, 500.0] repair/yr"]
     SampleRates --> End(["Return Balanced Subtree"])
 ```
+
+The flowchart above outlines the recursive generation procedure. Starting from the TOP event at depth $d=0$, intermediate nodes sample gate types and children counts until reaching the maximum depth $D_{\max}$, where basic events are instantiated with uniquely sampled physical failure/repair parameters.
 
 ### Generation Rules & Structural Constraints:
 * **Strict Depth-Bounded Balancing**: All leaf nodes appear strictly at depth $D_{\max} \in \{1, 2, 3\}$. Shallow leaves cannot coexist with deep subtrees, enforcing uniform complexity per tier (`LOW`, `MEDIUM`, `HIGH`).
@@ -220,10 +234,12 @@ flowchart LR
     T_rep --> P_safe
 ```
 
+The diagram above illustrates the two-state continuous-time component model. A token resides in `GE_safe` until the exponential failure transition fires, after which the repair transition becomes enabled to return the token to `GE_safe`.
+
 ### 5.2 Armed Gate Composition Pattern
 Intermediate gates (AND, OR, KOFN) are synthesized using immediate transitions with Boolean enabling conditions and structural guards:
 
-1. **Armed Place Guard**: To prevent infinite instantaneous firing loops in continuous time, every gate transition $T_{\text{gate\_fail}}$ requires an input arc from an `armed` place initialized with $1$ token (e.g., `G1_armed = 1`).
+1. **Armed Place Guard**: To prevent infinite instantaneous firing loops in continuous time, every gate transition $T_{\text{gate-fail}}$ requires an input arc from an `armed` place initialized with $1$ token (e.g., `G1_armed = 1`).
 2. **Enabling Conditions**: The immediate transition evaluates the status of child places without consuming tokens:
    * **AND Gate**: `GE1_failed > 0 && GE2_failed > 0`
    * **OR Gate**: `GE1_failed > 0 || GE2_failed > 0`
@@ -254,6 +270,8 @@ flowchart TD
     FT_Gate ==>|"Semantics-Preserving Transformation"| STPN_Gate
 ```
 
+The composition above shows how a Boolean gate (e.g. OR) is mapped to an immediate transition. The enabling guard reads the marking of child places non-destructively, while the token in `G1_armed` is consumed to enforce a single-fire semantics.
+
 ### 5.3 TOP Event Absorbing Semantics
 
 ```mermaid
@@ -277,6 +295,8 @@ flowchart LR
     T_TOP -->|"Postcondition: deposit 1 token"| P_TOP_FAIL
 ```
 
+The diagram above models the system failure absorption mechanism. When the root logical condition evaluates to TRUE, the TOP transition fires, resetting all operational places to zero via `marking-update` and placing a token into `TOP_failed`.
+
 ---
 
 ## 6. Formal Stochastic Engine: Analytical Ground Truth via SIRIO
@@ -299,6 +319,8 @@ flowchart TD
         LLM_Inference --> Hallucination["Constant / Polynomial Guessing<br/>(High Errors: MAE ~ 0.35 - 0.62)"]
     end
 ```
+
+The parallel comparison above contrasts the deterministic numerical approach against autoregressive neural inference. SIRIO builds the exact reachability graph and computes matrix exponentials, ensuring floating-point precision ($10^{-15}$), while the plain LLM attempts uncalibrated statistical guessing.
 
 ### Formal Reliability Metrics Defined:
 * **Transient Unreliability $Q(t)$**: The probability that the system experiences failure at or before time $t$:
@@ -330,32 +352,33 @@ The Spring Boot application (`org.swam.sirio_mcp_server`) exposes **29 atomic to
 ### 7.2 Transport Layer: SSE vs Stdio Protocol Architecture
 
 ```mermaid
-flowchart LR
-    subgraph Python_Runner["Python Benchmarking Orchestrator"]
+flowchart TD
+    subgraph Python_Layer["1. Python Benchmarking Orchestrator (Client Layer)"]
         Driver["AgentLoop / MCP Driver"]
         SDK["Python MCP Client SDK<br/>(ClientSession + AsyncExitStack)"]
         Driver <--> SDK
     end
 
-    subgraph Transports["Transport Layer Protocols"]
-        direction TB
-        SSE["SSE Mode (Server-Sent Events)<br/>HTTP POST /mcp/message<br/>HTTP GET /mcp/sse (Stream)"]
-        STDIO["Stdio Mode<br/>Standard I/O Streams<br/>(stdin / stdout JSON-RPC pipes)"]
+    subgraph Transport_Layer["2. MCP Dual Transport Layer"]
+        SSE["SSE Transport Mode (HTTP / Server-Sent Events)<br/>• Streaming: GET /mcp/sse<br/>• Commands: POST /mcp/message?sessionId=..."]
+        STDIO["Stdio Transport Mode (Process Streams)<br/>• Bidirectional JSON-RPC communication<br/>• Child Process (stdin / stdout pipes)"]
     end
 
-    subgraph Java_Backend["Java Spring Boot MCP Server"]
+    subgraph Java_Layer["3. Java Spring Boot Backend (Server Layer)"]
         Dispatcher["Spring DispatcherServlet / WebMvcSse"]
-        McpAsyncServer["Spring AI McpAsyncServer (29 Tools)"]
-        SirioEngine["SIRIO Petri Net Core Engine"]
+        McpAsyncServer["Spring AI McpAsyncServer (29 Tools Registered)"]
+        SirioEngine["SIRIO Petri Net Core Analytical Engine"]
         Dispatcher <--> McpAsyncServer
         McpAsyncServer <--> SirioEngine
     end
 
-    SDK <-->|"HTTP / SSE"| SSE
+    SDK <-->|"HTTP Streaming"| SSE
     SSE <--> Dispatcher
-    SDK <-->|"Child Process Subprocess"| STDIO
+    SDK <-->|"Process Pipes"| STDIO
     STDIO <--> McpAsyncServer
 ```
+
+The multi-tier architectural diagram above depicts how the Python runner connects to the Java backend. Users can select `--mcp-mode sse` (connecting over HTTP SSE for live server inspection) or `--mcp-mode stdio` (spawning isolated Java processes per run).
 
 ### 7.3 Modular Python Class Architecture & Polymorphism (`python_runner/`)
 
@@ -428,6 +451,8 @@ classDiagram
     AgentLoop *-- GraphIsomorphismEvaluator
 ```
 
+The class diagram above highlights the modular composition in `python_runner`. `AgentLoop` orchestrates polymorphic LLM drivers (`OpenAICompatibleDriver`, `GeminiDriver`, `MockLLMDriver`) and polymorphic MCP clients (`SirioMCPRealClient`, `SirioMCPMock`) seamlessly without coupling.
+
 ---
 
 ## 8. End-to-End Execution Flow & Multi-Turn State Machine
@@ -449,6 +474,8 @@ flowchart TD
     MCP_Output --> Eval
     BaselineVector --> Eval
 ```
+
+The 3-phase execution pipeline above illustrates the benchmarking lifecycle: first, Java computes the analytical ground truth vector; second, the Plain LLM generates its unaugmented response; third, the MCP agent builds and solves its net over multiple turns.
 
 ### 8.1 Multi-Turn Agent State Machine
 
@@ -484,6 +511,8 @@ stateDiagram-v2
     
     Evaluate --> [*]: Record in report_data.json
 ```
+
+The state diagram above illustrates the internal agentic loop. The agent iterates between generating tool calls and receiving environment feedback until it either produces the final JSON block or hits the maximum turn limit.
 
 ### 8.2 Sequence Diagram: Complete Tool Invocation Protocol
 
@@ -535,6 +564,8 @@ sequenceDiagram
     LLM-->>LLM: Formats final JSON markdown block
 ```
 
+The sequence diagram above documents the complete conversational interaction protocol, showing the explicit handshake, tool calls, formal solver execution, and return payloads.
+
 ---
 
 ## 9. Dual-Level Evaluation Framework & Graph Isomorphism
@@ -565,14 +596,16 @@ flowchart TD
     end
 ```
 
-### 9.1 Level 1 vs Level 2 Rationale
-* **Level 1 (Functional / End-to-End)**: Verifies the textual JSON output parsed from the LLM's final response. If an agent builds a perfect Petri Net but crashes on the last turn due to a `Bad Request` payload error or context limit, Level 1 scores it as a failure.
-* **Level 2 (Modeling / Reconstruction)**: Interrogates the active Java Petri Net object directly from MCP memory and solves it using SIRIO. This reveals whether the agent succeeded in the MDE modeling task regardless of formatting or communication issues.
+The dual-level evaluation flowchart above shows how MCP runs are evaluated both at the surface JSON level (Level 1) and by directly inspecting the in-memory Petri net via programmatic execution and the VF2 graph isomorphism engine (Level 2).
 
-### 9.2 Graph Isomorphism Verification (VF2 Algorithm)
+> [!NOTE]
+> ### Why Dual-Level Evaluation Is Essential
+> In standard LLM benchmarks, an agent that constructs a mathematically flawless Petri Net but fails to print the final JSON block (e.g., due to output token limits or network interruption) is scored as 0% accurate. Level 2 Modeling Correctness solves this by executing SIRIO directly against the agent's synthesized model in server memory, proving that **the model-to-model transformation itself succeeded**.
+
+### 9.1 Graph Isomorphism Verification (VF2 Algorithm)
 Using [`graph_isomorphism.py`](file:///python_runner/graph_isomorphism.py), the synthesized Petri net is transformed into a directed bipartite graph $G = (P \cup T, E)$ with node attributes (place tokens, transition rates, enabling conditions) and compared against the reference ground-truth graph using NetworkX's VF2 isomorphism engine.
 
-### 9.3 Mathematical Metrics Formulation & Concrete Examples
+### 9.2 Mathematical Metrics Formulation & Concrete Examples
 * **Transient MAE**:
   $$\text{MAE} = \frac{1}{K} \sum_{i=1}^K |Q_{\text{pred}}(t_i) - Q_{\text{truth}}(t_i)|$$
   *Example*: Across 25 time points, if reported unreliability is $0.05$ at $t=1$ (ground truth $0.050002$), the error is $2 \times 10^{-6}$.
@@ -633,12 +666,13 @@ Append your final quantitative result at the very end of your response in a fenc
   ]
 }
 ```
+```
 
 ---
 
-## 11. Repository Structure
+## 11. Repository Structure & Java Framework Deep-Dive
 
-```
+```text
 sirio-mcp-bench/
 ├── .env.example                  # Environment variables template (API keys)
 ├── pom.xml                       # Maven build descriptor (Java 25, Spring Boot, Spring AI MCP)
@@ -720,8 +754,11 @@ sirio-mcp-bench/
    GEMINI_API_KEY=your-google-ai-studio-key
    ```
 
+> [!CAUTION]
+> **Keep Credentials Secure**: Never commit `.env` files or hardcode API keys into test scripts. `sirio-mcp-bench` automatically loads `.env` variables via `python-dotenv`.
+
 4. **Build the Java Project & Generate Classpath**:
-   The Python runner executes this automatically on startup via `baseline_runner.py`. To compile manually:
+   The Python runner handles compilation and classpath extraction automatically upon launch via `baseline_runner.py`. To compile manually:
    ```bash
    # On Windows PowerShell:
    mvn compile dependency:build-classpath "-Dmdep.outputFile=classpath.txt"
