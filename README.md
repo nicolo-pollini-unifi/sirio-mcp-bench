@@ -607,14 +607,29 @@ The dual-level evaluation flowchart above shows how MCP runs are evaluated both 
 Using [`graph_isomorphism.py`](file:///python_runner/graph_isomorphism.py), the synthesized Petri net is transformed into a directed bipartite graph $G = (P \cup T, E)$ with node attributes (place tokens, transition rates, enabling conditions) and compared against the reference ground-truth graph using NetworkX's VF2 isomorphism engine.
 
 ### 9.2 Mathematical Metrics Formulation & Concrete Examples
-* **Transient MAE**:
-  $$\text{MAE} = \frac{1}{K} \sum_{i=1}^K |Q_{\text{pred}}(t_i) - Q_{\text{truth}}(t_i)|$$
+
+* **Transient Mean Absolute Error (MAE)**:
+
+  $$\text{MAE}_{\text{transient}} = \frac{1}{K} \sum_{i=1}^K |Q_{\text{pred}}(t_i) - Q_{\text{truth}}(t_i)|$$
+
   *Example*: Across 25 time points, if reported unreliability is $0.05$ at $t=1$ (ground truth $0.050002$), the error is $2 \times 10^{-6}$.
+
+* **Transient Root Mean Squared Error (RMSE)**:
+
+  $$\text{RMSE}_{\text{transient}} = \sqrt{\frac{1}{K} \sum_{i=1}^K \left(Q_{\text{pred}}(t_i) - Q_{\text{truth}}(t_i)\right)^2}$$
+
 * **Steady-State Absolute Error**:
+
   $$\text{Error}_{\text{steady}} = |Q_{\text{pred}}(\infty) - Q_{\text{truth}}(\infty)|$$
-* **Pass Criterion ($\tau = 10^{-4}$)**: A run passes if and only if $\max(\text{MAE}_{\text{transient}}, \text{Error}_{\text{steady}}) \le 10^{-4}$.
+
+* **Pass Criterion ($\tau = 10^{-4}$)**: A run passes if and only if:
+
+  $$\max\left(\text{MAE}_{\text{transient}},\, \text{Error}_{\text{steady}}\right) \le 10^{-4}$$
+
 * **Pass@k Unbiased Estimator**:
+
   $$\text{Pass@}k = 1 - \frac{\binom{n - c}{k}}{\binom{n}{k}}$$
+
   *Example*: For $n=5$ samples where $c=3$ runs passed, $\text{Pass@}1 = 1 - \frac{\binom{2}{1}}{\binom{5}{1}} = 1 - \frac{2}{5} = 60.0\%$, and $\text{Pass@}5 = 1 - \frac{\binom{2}{5}}{\binom{5}{5}} = 100.0\%$.
 
 ---
