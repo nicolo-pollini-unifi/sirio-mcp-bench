@@ -48,11 +48,12 @@ Integrating Large Language Models (LLMs) into **Model-Driven Engineering (MDE)**
 > **Why Plain LLMs Cannot Be Trusted in Dependability Tasks**:
 > Dependability and safety-critical engineering require mathematically certified bounds. In our empirical experiments, plain LLMs systematically hallucinated constant approximations (e.g. repeating $1.0$ across all time steps) or low-degree polynomials that only appear correct by statistical coincidence.
 
-### The Benchmark Design
-To empirically quantify this paradigm, `sirio-mcp-bench` provides an end-to-end quantitative benchmarking framework on **Stochastic Repairable Fault Trees (FTA)**:
-* **Analytically Exact Ground Truth**: Computes the exact steady-state unavailability $Q(\infty)$ and transient unreliability curve $Q(t)$ over a time horizon $[0, T]$ via automated translation into Stochastic Timed Petri Nets (STPNs) solved with the formal SIRIO numerical engine (regenerative transient analysis without Monte Carlo simulation).
-* **Plain LLM (Baseline / No-MCP)**: The model estimates $Q(\infty)$ and $Q(t)$ directly from the textual tree specification through pure internal reasoning.
-* **MCP-Augmented LLM (Treatment / MCP)**: The model is connected via MCP to a purpose-built server exposing **29 low-level atomic SIRIO modeling primitives** (places, transitions, stochastic rates, enabling conditions). The agent must **synthesize a semantically equivalent Petri Net** from scratch and delegate numerical solving. Crucially, the agent is *never* provided with the automated reference translation algorithm.
+> [!NOTE]
+> ### The Benchmark Design
+> To empirically quantify this paradigm, `sirio-mcp-bench` provides an end-to-end quantitative benchmarking framework on **Stochastic Repairable Fault Trees (FTA)**:
+> * **Analytically Exact Ground Truth**: Computes the exact steady-state unavailability $Q(\infty)$ and transient unreliability curve $Q(t)$ over a time horizon $[0, T]$ via automated translation into Stochastic Timed Petri Nets (STPNs) solved with the formal SIRIO numerical engine (regenerative transient analysis without Monte Carlo simulation).
+> * **Plain LLM (Baseline / No-MCP)**: The model estimates $Q(\infty)$ and $Q(t)$ directly from the textual tree specification through pure internal reasoning.
+> * **MCP-Augmented LLM (Treatment / MCP)**: The model is connected via MCP to a purpose-built server exposing **29 low-level atomic SIRIO modeling primitives** (places, transitions, stochastic rates, enabling conditions). The agent must **synthesize a semantically equivalent Petri Net** from scratch and delegate numerical solving. Crucially, the agent is *never* provided with the automated reference translation algorithm.
 
 ```mermaid
 flowchart TD
