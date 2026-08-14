@@ -608,29 +608,34 @@ Using [`graph_isomorphism.py`](file:///python_runner/graph_isomorphism.py), the 
 
 ### 9.2 Mathematical Metrics Formulation & Concrete Examples
 
-* **Transient Mean Absolute Error (MAE)**:
+#### 1. Transient Mean Absolute Error (MAE)
+Measures the average absolute deviation between the predicted unreliability curve and the analytical ground truth across all $K$ discrete time points:
 
-  $$\text{MAE}_{\text{transient}} = \frac{1}{K} \sum_{i=1}^K |Q_{\text{pred}}(t_i) - Q_{\text{truth}}(t_i)|$$
+$$\mathrm{MAE}_{\mathrm{transient}} = \frac{1}{K} \sum_{i=1}^{K} |Q_{\mathrm{pred}}(t_i) - Q_{\mathrm{truth}}(t_i)|$$
 
-  *Example*: Across 25 time points, if reported unreliability is $0.05$ at $t=1$ (ground truth $0.050002$), the error is $2 \times 10^{-6}$.
+*Example*: Across 25 time points, if reported unreliability is $0.05$ at $t=1$ (ground truth $0.050002$), the error is $2 \times 10^{-6}$.
 
-* **Transient Root Mean Squared Error (RMSE)**:
+#### 2. Transient Root Mean Squared Error (RMSE)
+Penalizes larger transient deviations quadratically:
 
-  $$\text{RMSE}_{\text{transient}} = \sqrt{\frac{1}{K} \sum_{i=1}^K \left(Q_{\text{pred}}(t_i) - Q_{\text{truth}}(t_i)\right)^2}$$
+$$\mathrm{RMSE}_{\mathrm{transient}} = \sqrt{\frac{1}{K} \sum_{i=1}^{K} \left(Q_{\mathrm{pred}}(t_i) - Q_{\mathrm{truth}}(t_i)\right)^2}$$
 
-* **Steady-State Absolute Error**:
+#### 3. Steady-State Absolute Error
+Evaluates the asymptotic limit error as $t \to \infty$:
 
-  $$\text{Error}_{\text{steady}} = |Q_{\text{pred}}(\infty) - Q_{\text{truth}}(\infty)|$$
+$$\mathrm{Error}_{\mathrm{steady}} = |Q_{\mathrm{pred}}(\infty) - Q_{\mathrm{truth}}(\infty)|$$
 
-* **Pass Criterion ($\tau = 10^{-4}$)**: A run passes if and only if:
+#### 4. Pass Criterion ($\tau = 10^{-4}$)
+A run is scored as a **Pass** if and only if both transient and steady-state errors satisfy the tolerance threshold:
 
-  $$\max\left(\text{MAE}_{\text{transient}},\, \text{Error}_{\text{steady}}\right) \le 10^{-4}$$
+$$\max\left(\mathrm{MAE}_{\mathrm{transient}}, \mathrm{Error}_{\mathrm{steady}}\right) \le 10^{-4}$$
 
-* **Pass@k Unbiased Estimator**:
+#### 5. Pass@k Unbiased Estimator
+Evaluates the probability that at least $1$ sample is correct when drawing $k$ samples from $n = 5$ total runs per case (with $c$ correct passes):
 
-  $$\text{Pass@}k = 1 - \frac{\binom{n - c}{k}}{\binom{n}{k}}$$
+$$\mathrm{Pass@}k = 1 - \frac{\binom{n - c}{k}}{\binom{n}{k}}$$
 
-  *Example*: For $n=5$ samples where $c=3$ runs passed, $\text{Pass@}1 = 1 - \frac{\binom{2}{1}}{\binom{5}{1}} = 1 - \frac{2}{5} = 60.0\%$, and $\text{Pass@}5 = 1 - \frac{\binom{2}{5}}{\binom{5}{5}} = 100.0\%$.
+*Example*: For $n=5$ samples where $c=3$ runs passed, $\mathrm{Pass@}1 = 1 - \frac{\binom{2}{1}}{\binom{5}{1}} = 60.0\%$, and $\mathrm{Pass@}5 = 1 - \frac{\binom{2}{5}}{\binom{5}{5}} = 100.0\%$.
 
 ---
 
