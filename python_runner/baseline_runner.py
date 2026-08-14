@@ -40,27 +40,30 @@ def ensure_project_built(workspace_path: str) -> None:
 
     if should_build:
         logger.info("Compiling project and generating classpath.txt automatically via Maven...")
+        use_shell = sys.platform.startswith("win")
         try:
             subprocess.run(
                 ["mvn", "compile", "dependency:build-classpath", "-Dmdep.outputFile=classpath.txt"],
                 cwd=workspace_path,
                 check=True,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
+                shell=use_shell
             )
             subprocess.run(
                 ["mvn", "package", "-DskipTests"],
                 cwd=workspace_path,
                 check=True,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                stderr=subprocess.DEVNULL,
+                shell=use_shell
             )
             logger.info("Project built successfully. Generated classpath.txt.")
         except Exception as e:
             logger.warning(
                 f"Failed to build the project automatically via Maven: {e}.\n"
                 "Please make sure Maven (mvn) and JDK are installed and configured on your PATH,\n"
-                "and run 'mvn compile dependency:build-classpath -Dmdep.outputFile=classpath.txt' manually."
+                "and run: mvn compile dependency:build-classpath \"-Dmdep.outputFile=classpath.txt\" manually."
             )
 
 def run_java_baseline(workspace_path: str, case_json_path: str, case_id: str) -> Dict[str, Any]:
